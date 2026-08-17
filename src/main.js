@@ -558,6 +558,12 @@ const CAM_PIVOT_Y = TOUCH ? 0.9 : 2.2;
 const CAM_ELEV_MIN = 0.10;   // ~6°
 const CAM_ELEV_MAX = 1.20;   // ~69°
 const CAM_ELEV_RATE = 0.9;   // rad/s
+
+// How hard the camera pulls back onto the true barrel angle, on top of the
+// feed-forward. Only ever corrects UNcommanded movement — impacts, physics
+// jitter, network reconciliation — so it can be gentle without reintroducing
+// aim lag. Lower = calmer camera, slower recovery from a shunt.
+const CAM_YAW_CATCHUP = 9;
 let camElevWanted = CAM_BASE_ELEV;
 
 const camTarget = new THREE.Vector3();
@@ -605,9 +611,28 @@ function updateCamera(dt) {
   // health off" and "the turret turns faster than the camera" — which are the
   // same bug seen from two sides.
   //
-  // Nothing here needs smoothing: turret traverse already has its own spin-up
-  // ramp, so the value being followed is smooth to begin with.
-  camYaw = targetYaw;
+  // Locking it outright was too blunt, though. The camera then inherited every
+  // twitch of the HULL — kerb strikes, tank-on-tank shoves, the yaw wobble of
+  // driving — at full amplitude, where the old easing had quietly absorbed all
+  // of it. Playtest: "the camera moves too sharply when I move the tank, it
+  // throws the whole frame around."
+  //
+  // So: track the rotation, filter the noise. The rate the barrel is *known* to
+  // be turning at — hull angular velocity plus turret traverse — is integrated
+  // directly, which costs nothing in lag because it is not a correction, it is
+  // the actual motion. A gentle pull toward the true angle then mops up drift
+  // and absorbs anything sudden that was not commanded.
+  //
+  // Feed-forward is what makes this different from simply easing again: a
+  // constant turn is followed with zero steady-state error, so the 32° of aim
+  // lag does not come back, while a one-frame jolt is spread over ~0.1s.
+  const yawRate = (player.body.angvel().y ?? 0) + (player.turretVel ?? 0);
+  camYaw += yawRate * dt;
+
+  let d = targetYaw - camYaw;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  camYaw += d * (1 - Math.exp(-CAM_YAW_CATCHUP * dt));
 
   // Smooth the *inputs* — pivot and yaw — then apply collision to the result.
   // Smoothing after the collision clamp would let the camera drift back into

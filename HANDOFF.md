@@ -514,6 +514,39 @@ saying whether the trigger would do anything. Same bar, filled from cooldown
 when there is no charge clock, and it goes accent-coloured when the gun is ready
 so it reads peripherally.
 
+**Locking the camera to the turret was right for aim and wrong for feel.** With
+yaw welded to the barrel, the camera also inherited every twitch of the HULL at
+full amplitude — kerb strikes, tank-on-tank shoves, driving wobble — all of
+which the old easing had been quietly absorbing. Reported immediately: "the
+camera moves too sharply when I move the tank, it throws the whole frame
+around."
+
+The fix is feed-forward, not more easing. The rate the barrel is *known* to be
+turning — hull angular velocity plus turret traverse — is integrated directly,
+which costs nothing in lag because it is the actual motion rather than a
+correction; a gentle pull toward the true angle then mops up whatever was not
+commanded. Measured aim error: 0.00° holding full traverse, 0.00° turning the
+hull hard, 0.8° with everything at once. Measured jolt response: a 17° hull
+shunt arrives as 2.4° on the first frame and settles over half a second.
+**Easing and lag are not the same axis** — feed-forward buys smoothness without
+paying in accuracy.
+
+**Acceleration limits, not fade durations.** Asked for a "very small fade" when
+the turret stops, and then, correctly, for it to scale with speed. Both the
+turret and the hull now ramp toward their target rate at a fixed angular
+acceleration, so the settle is quadratic in how fast the thing was actually
+turning: the turret coasts 7.5° from a full sweep, 1.9° from a half sweep and
+0.3° from a flick; the hull 5.3°, 0.8° and 0°. A dab of steer still parks
+exactly where you left it. Scaled by barrel length for turrets and by hull mass
+for chassis, so a Rail feels heavier to swing than a Twin and a Mammoth heavier
+than a Wasp — out of properties they already had.
+
+The hull's rotation previously had **no** physics at all: `setAngvel` was
+written straight from the input, so it reached full rotation on the frame the
+key went down and stopped dead on the frame it came up, while its linear motion
+had always blended toward a target. Balance impact of fixing it: twin-vs-rail
+0.588 -> 0.525, timeouts 3 -> 2, TTK unchanged.
+
 - **The camera fades cover; it does not climb over it.** It used to sphere-sweep
   a fan of steeper angles and take whichever bought the most distance. That kept
   it out of walls and cost the player the fight: backing into cover — which is
@@ -624,6 +657,9 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
 21. Two-player playtest: camera fades cover instead of climbing over it; camera
     yaw locked to the turret (was 32° of aim error); damage numbers; reload bar
     for every weapon.
+22. Camera yaw moved from locked to feed-forward + gentle catch-up (locked was
+    too harsh when the hull moved); turret and hull rotation given acceleration
+    limits so the settle scales with speed.
 20. Playtest: the hover hull could neither hit nor be hit. Colliders grown to
     cover the turret, hover skirt added, ride height lowered; `hitheight.mjs`
     added. Uncovered a Rail imbalance that the bug had been masking.

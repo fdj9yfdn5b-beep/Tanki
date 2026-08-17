@@ -39,8 +39,35 @@ const HOVER_PROBE = 6;          // m of ground to look for below
 const HOVER_STIFFNESS = 60;
 const HOVER_DAMPING = 12;
 
-const TURRET_SPIN_UP = 0.75;    // s from rest to full traverse
-const TURRET_SPIN_DOWN = 0.12;  // s to stop — crisp, so aim parks where you left it
+// Turret spin-up and settle, in seconds from rest to full traverse and back.
+//
+// These are ANGULAR ACCELERATION limits, not durations of an animation, and the
+// difference is the whole point: with a fixed acceleration, the turret takes as
+// long to stop as it was actually going fast. Release from a flick and it stops
+// almost at once; release from a full sweep and it settles over a much longer
+// arc, because the distance it coasts is ω²/2a — quadratic in how fast it was
+// moving. That is real physics rather than a fade, which is what was asked for.
+//
+// Scaled per weapon by barrel length, as a stand-in for the rotational inertia
+// of the thing being swung. Rail hangs a 3.6m barrel off the ring and Twin a
+// 2.5m pair, so Rail winds up and settles noticeably heavier — and each weapon
+// gets a distinct feel out of a property it already had.
+//
+// Settle was 0.12s flat, which parked the aim exactly where you left it and
+// felt like the gun was on rails. Every increase here is coast the player did
+// not ask for, so it trades against the aim precision playtest 6 was about;
+// this is deliberately the smallest step that reads as mass.
+const TURRET_SPIN_UP = 0.75;
+const TURRET_SPIN_DOWN = 0.16;
+const TURRET_REFERENCE_BARREL = 3.0;   // Thunder's, i.e. the middle of the range
+
+// The same treatment for the hull's own rotation, scaled by mass instead of
+// barrel length. Deliberately quicker to stop than to start: a tracked vehicle
+// brakes a turn by driving the tracks against it, which it can do harder than
+// it can accelerate the turn in the first place.
+const HULL_TURN_SPIN_UP = 0.30;        // s from rest to full turn rate
+const HULL_TURN_SETTLE = 0.18;         // s from full turn rate back to straight
+const HULL_REFERENCE_MASS = 1.55;      // Hunter
 
 function approach(current, target, maxDelta) {
   if (current < target) return Math.min(target, current + maxDelta);
@@ -72,6 +99,7 @@ export class Tank {
     this.trackTimer = 0;
     this.recoilOffset = 0;
     this.turretVel = 0;
+    this.turnVel = 0;
 
     this._buildBody();
     this._buildRig();
@@ -536,7 +564,22 @@ export class Tank {
       // "right" is a request to rotate clockwise and it means the same thing
       // whichever way the hull is travelling. Inverting it just makes the
       // controls change meaning under the player mid-manoeuvre.
-      this.body.setAngvel({ x: 0, y: -steer * this.hull.turnRate, z: 0 }, true);
+      // Ramped, not set. Writing the angular velocity straight from the input
+      // meant the hull reached full rotation on the frame the key went down and
+      // stopped dead on the frame it came up — the one part of the tank with no
+      // physics in it at all, while its linear motion had always blended toward
+      // a target. Playtest: the movement did not read as a machine with mass.
+      //
+      // Same acceleration-limited model as the turret, so the settle is again
+      // proportional to how fast it was actually turning: a dab of steer stops
+      // almost immediately, a hard sustained turn swings a little past. Scaled
+      // by hull mass, which is what makes a Mammoth feel like a Mammoth.
+      const inertia = this.hull.mass / HULL_REFERENCE_MASS;
+      const want = -steer * this.hull.turnRate;
+      const ramp = this.hull.turnRate
+        / ((want === 0 ? HULL_TURN_SETTLE : HULL_TURN_SPIN_UP) * inertia);
+      this.turnVel = approach(this.turnVel, want, ramp * dt);
+      this.body.setAngvel({ x: 0, y: this.turnVel, z: 0 }, true);
     }
 
     // ── Turret traverse ─────────────────────────────────────────────────────
@@ -546,8 +589,11 @@ export class Tank {
     if (input.turretSteer !== undefined && input.turretSteer !== null) {
       const maxRate = this.traverseRate;
       const target = THREE.MathUtils.clamp(input.turretSteer, -1, 1) * maxRate;
-      // Spin up gently, stop sharply.
-      const ramp = maxRate / (target === 0 ? TURRET_SPIN_DOWN : TURRET_SPIN_UP);
+      // A fixed acceleration limit, so both the wind-up and the settle scale
+      // with how fast the turret is actually turning rather than taking a fixed
+      // time. Heavier barrel, gentler acceleration — see the constants.
+      const inertia = this.weapon.barrelLength / TURRET_REFERENCE_BARREL;
+      const ramp = maxRate / ((target === 0 ? TURRET_SPIN_DOWN : TURRET_SPIN_UP) * inertia);
       this.turretVel = approach(this.turretVel, target, ramp * dt);
       this.turret.rotation.y += this.turretVel * dt;
       this.aimError = 0;
