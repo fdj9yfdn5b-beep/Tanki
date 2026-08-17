@@ -485,6 +485,22 @@ every tick so the muzzle sat a metre high and every shot flew over the target.
 
 ## 5. Deliberate decisions worth not re-litigating
 
+- **The camera fades cover; it does not climb over it.** It used to sphere-sweep
+  a fan of steeper angles and take whichever bought the most distance. That kept
+  it out of walls and cost the player the fight: backing into cover — which is
+  where a duel happens — swung the view into a top-down shot and put the tank
+  shooting at you off the bottom of the screen. Two humans, independently: "it
+  hides the attacker." Framing now stays exactly where the player put it and the
+  blocking geometry goes translucent. **Moving the camera to solve occlusion
+  moves the picture; fading the occluder solves it and leaves the picture
+  alone.** Two traps in doing it: the blocks share ONE material, so fading a
+  mesh's material dissolves the whole arena (each block that fades gets a lazy
+  clone), and the occlusion ray must be cast from the PLAYER outward, because
+  three's raycaster respects `material.side` and a camera already inside a wall
+  sees only back faces — the exact case that matters most. Emissive surfaces
+  also need their `emissiveIntensity` zeroed: alpha alone left the centre
+  structure's glowing trim as a teal wash that was harder to see past than the
+  solid wall.
 - **Aiming is rate control (`Z`/`X`), not a mouse cursor.** Mouse aim made the view
   chase the pointer and made turret traverse — a real weapon stat — unfeelable.
   A turret spin-up ramp gives fine control: a one-frame tap moves the aim ~2cm at
@@ -576,6 +592,7 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
     lowered so your own tank is not hidden behind the HUD.
 19. `wraith`, an anti-grav hull that strafes — the actual answer to a thumbstick.
     New `strafe` input axis, hover spring, body-follows-gun, hover visuals.
+21. Two-player playtest: camera fades cover instead of climbing over it.
 20. Playtest: the hover hull could neither hit nor be hit. Colliders grown to
     cover the turret, hover skirt added, ride height lowered; `hitheight.mjs`
     added. Uncovered a Rail imbalance that the bug had been masking.
