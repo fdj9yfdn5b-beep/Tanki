@@ -42,6 +42,7 @@
     </div>
   </div>
 
+  <div id="damage"></div>
   <div id="scoreboard"></div>
   <div id="feed"></div>
   <div id="perf"></div>
@@ -54,6 +55,9 @@
         <div id="hp-fill"></div>
         <span id="hp-text">280 / 280</span>
       </div>
+      <!-- One bar for "can I shoot yet". On a charge weapon it fills as the
+           shot winds up; on everything else it fills as the gun reloads. Both
+           answer the same question, so they share one place to look. -->
       <div id="charge"><div id="charge-fill"></div></div>
       <div id="charge-hint"></div>
     </div>

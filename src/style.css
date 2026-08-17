@@ -293,6 +293,12 @@ body.touch #help { display: none; }
 
 #charge-fill {
   height: 100%; width: 0%;
+  background: var(--muted);
+  transition: background 0.1s;
+}
+/* Full bar means the trigger will fire. Colour carries it as well as length, so
+   it reads from peripheral vision mid-fight without being looked at. */
+#charge.ready #charge-fill {
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent);
 }
@@ -492,4 +498,30 @@ body.touch #help { display: none; }
   .lo-card .lo-stat { font-size: 9px; }
   #lo-join { margin-top: 11px; padding: 10px; font-size: 12px; }
   .lo-foot { margin-top: 6px; font-size: 10px; min-height: 12px; }
+}
+
+/* Floating damage numbers.
+   Positioned in screen space over the tank that was hit. They exist because
+   Twin's damage falls from 34 at knife range to 5 past 26m, and a hit looked
+   exactly the same either way — the playtest report was "often shoots and takes
+   no health off", which was partly true hits doing 2% of a health bar. */
+#damage { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
+.dmg-num {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+  animation: dmg-rise 0.75s ease-out forwards;
+  white-space: nowrap;
+}
+/* Weak hits are dimmer and smaller — the number tells you how much, the styling
+   tells you at a glance that you are out of your band. */
+.dmg-num.weak { color: var(--muted); font-size: 12px; font-weight: 600; }
+.dmg-num.big { color: var(--accent); font-size: 19px; }
+@keyframes dmg-rise {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+  15%  { opacity: 1; transform: translate(-50%, -70%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -190%) scale(1); }
 }

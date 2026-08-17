@@ -292,8 +292,9 @@ function startOnline(lo, status) {
         // happening, and it was the largest single source of effect spam in a
         // firefight.
         //
-        // Confirmation that damage landed is the job of the HUD hit marker,
-        // which is on screen where the player is already looking.
+        // What it DOES draw is the number, which is the part that was missing:
+        // how much the shot was worth.
+        if (e.by === net.id && who !== player) showDamage(who, e.dmg);
       } else if (e.e === 'kill' && who) {
         fx.explosion(who.position, 7, 0xff8a3d);
         const killer = e.by != null ? match.tanks.get(e.by) : null;
@@ -428,7 +429,36 @@ const hud = {
   respawn: document.getElementById('respawn'),
   hint: document.getElementById('charge-hint'),
   scoreboard: document.getElementById('scoreboard'),
+  damage: document.getElementById('damage'),
 };
+
+/**
+ * Float the damage figure over the tank that took it.
+ *
+ * Only for damage YOU dealt. Twin drops from 34 at knife range to 5 past 26m —
+ * 2% of a health bar — and until now a hit at either end looked and sounded
+ * identical, so a shot that connected for almost nothing was indistinguishable
+ * from one that missed. That is most of "often shoots and takes no health off":
+ * some of those shots were landing.
+ *
+ * Screen-space DOM rather than 3D text: it needs to stay readable at any range,
+ * which is the opposite of what perspective does to a world-space label.
+ */
+const _dmgProject = new THREE.Vector3();
+
+function showDamage(target, amount) {
+  if (!hud.damage || !target) return;
+  _dmgProject.copy(target.position).setY(target.position.y + 2.2).project(camera);
+  if (_dmgProject.z > 1) return;              // behind the camera
+  const el = document.createElement('div');
+  el.className = 'dmg-num'
+    + (amount < 12 ? ' weak' : amount >= 60 ? ' big' : '');
+  el.textContent = Math.round(amount);
+  el.style.left = `${(_dmgProject.x * 0.5 + 0.5) * innerWidth}px`;
+  el.style.top = `${(-_dmgProject.y * 0.5 + 0.5) * innerHeight}px`;
+  hud.damage.appendChild(el);
+  setTimeout(() => el.remove(), 800);
+}
 
 // ── Scoreboard ──────────────────────────────────────────────────────────────
 // Rebuilt from tank state rather than accumulated locally, so online it shows
@@ -469,7 +499,7 @@ function updateWeaponHud() {
   const w = player.weapon;
   hud.weapon.textContent = w.name;
   hud.band.textContent = w.band.toUpperCase();
-  hud.chargeWrap.style.display = w.chargeTime ? 'block' : 'none';
+  hud.chargeWrap.style.display = 'block';   // reload bar for every weapon now
   // Charge weapons are unusable until you know they need a held button — the
   // click-to-fire reflex just silently does nothing.
   hud.hint.style.display = w.chargeTime ? 'block' : 'none';
@@ -502,6 +532,13 @@ combat.onKill = (victim, killer) => {
 // and the shell's own impact lands on the enemy where it visibly hit — the
 // marker was a second, worse copy of information already on screen, parked in
 // the middle of the view.
+//
+// Offline there is no server to report hits, so damage numbers come straight
+// off the local combat resolution. Online this handler is not used; the `hit`
+// event is (see onEvent), because there the server owns the number.
+combat.onHit = (target, amount, source) => {
+  if (!ONLINE && source === player && target !== player) showDamage(target, amount);
+};
 
 // ── Camera ──────────────────────────────────────────────────────────────────
 // ── Third-person spring arm ─────────────────────────────────────────────────
@@ -550,13 +587,27 @@ function updateCamera(dt) {
   const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
   const targetYaw = Math.atan2(fwd.x, fwd.z);
 
-  // Smoothed on the shortest arc. Aim is raycast from this camera and the
-  // turret chases that aim, so the two form a feedback loop — the camera has to
-  // converge slower than the turret or the view oscillates around the target.
-  let d = targetYaw - camYaw;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  camYaw += d * (1 - Math.exp(-4.5 * dt));
+  // The camera yaw is LOCKED to the turret, not smoothed toward it.
+  //
+  // It used to ease at 4.5/s, justified by a feedback loop: aim was raycast from
+  // the camera and the turret chased that aim, so a fast camera made the view
+  // oscillate. That scheme is gone — the player drives the turret directly with
+  // Z/X and `aimPoint` is now used only by bots, which have no camera. The
+  // constraint outlived the thing it was protecting.
+  //
+  // What it cost: holding the turret key, the barrel ran ahead of the view by
+  // traverse/4.5 radians, and it never caught up while the key was down. That is
+  // 25° on a Hunter with Twin and 32° on a Wasp — **9 to 13 metres sideways at
+  // 20m**. With no reticle, the rule is "what the barrel points at is what you
+  // hit", and the player aims by the screen; a barrel pointing a third of a
+  // right angle off-screen means tracking a moving target and missing it
+  // entirely. Reported as two separate complaints — "often shoots and takes no
+  // health off" and "the turret turns faster than the camera" — which are the
+  // same bug seen from two sides.
+  //
+  // Nothing here needs smoothing: turret traverse already has its own spin-up
+  // ramp, so the value being followed is smooth to begin with.
+  camYaw = targetYaw;
 
   // Smooth the *inputs* — pivot and yaw — then apply collision to the result.
   // Smoothing after the collision clamp would let the camera drift back into
@@ -963,7 +1014,18 @@ function present(dt) {
   hud.hp.style.width = `${frac * 100}%`;
   hud.hp.style.background = frac > 0.5 ? '#4ade80' : frac > 0.25 ? '#fbbf24' : '#ef4444';
   hud.hpText.textContent = `${Math.ceil(player.hp)} / ${player.maxHp}`;
-  hud.charge.style.width = `${player.charge * 100}%`;
+  // Reload / charge readout. Until now the bar existed only for Rail, so with
+  // every other weapon there was nothing on screen saying whether the trigger
+  // would do anything — you pulled it and either a shot came out or it silently
+  // did not. Same bar, same question, filled from whichever of the two clocks
+  // the weapon actually has.
+  const w = player.weapon;
+  const ready = w.chargeTime
+    ? player.charge
+    : (player.cooldown > 0 ? 1 - player.cooldown / w.fireInterval : 1);
+  hud.charge.style.width = `${Math.max(0, Math.min(1, ready)) * 100}%`;
+  hud.chargeWrap.classList.toggle('ready', ready >= 1);
+
   hud.respawn.style.display = player.alive ? 'none' : 'block';
 
   // Bloom is constant. It used to ramp with your own charge, on the stated

@@ -485,6 +485,35 @@ every tick so the muzzle sat a metre high and every shot flew over the target.
 
 ## 5. Deliberate decisions worth not re-litigating
 
+**"Often shoots and takes no health off" was two separate causes, and neither
+was hit registration.** Reported for a third time; the hit geometry and shot
+sync were both already verified, so it had to be something else.
+
+*The camera lagged the barrel by up to 32 degrees.* Camera yaw eased toward the
+turret at 4.5/s, so while the turret key was held the barrel ran ahead by
+traverse/4.5 and never caught up — 25° on Hunter+Twin, 32° on Wasp+Twin, which
+is **9 to 13 metres sideways at 20m**. With no reticle the rule is "the barrel
+is the reticle", but the player aims by the screen, so tracking anything meant
+firing a third of a right angle off. The easing was justified in a comment by a
+feedback loop — aim raycast from the camera, turret chasing that aim — that no
+longer exists: the player drives the turret with Z/X and `aimPoint` is used only
+by bots, which have no camera. **A constraint outlived the thing it protected.**
+Yaw is now locked to the turret; measured error while turning: 0.0°. The same
+bug was reported separately as "the turret turns faster than the camera" — one
+cause, two complaints.
+
+*And Twin at range does 2% of a health bar.* Damage falls from 34 at knife range
+to 5 past 26m by design, but nothing on screen distinguished a 34 from a 5, so a
+landed shot was indistinguishable from a miss. Floating damage numbers now show
+the figure, dimmed and shrunk below 12 damage. The `hit` event already carried
+`dmg`, so no protocol change was needed.
+
+**A reload bar exists for every weapon, not just Rail.** The bar was built for
+charge weapons and hidden otherwise, so with Twin or Thunder there was nothing
+saying whether the trigger would do anything. Same bar, filled from cooldown
+when there is no charge clock, and it goes accent-coloured when the gun is ready
+so it reads peripherally.
+
 - **The camera fades cover; it does not climb over it.** It used to sphere-sweep
   a fan of steeper angles and take whichever bought the most distance. That kept
   it out of walls and cost the player the fight: backing into cover — which is
@@ -592,7 +621,9 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
     lowered so your own tank is not hidden behind the HUD.
 19. `wraith`, an anti-grav hull that strafes — the actual answer to a thumbstick.
     New `strafe` input axis, hover spring, body-follows-gun, hover visuals.
-21. Two-player playtest: camera fades cover instead of climbing over it.
+21. Two-player playtest: camera fades cover instead of climbing over it; camera
+    yaw locked to the turret (was 32° of aim error); damage numbers; reload bar
+    for every weapon.
 20. Playtest: the hover hull could neither hit nor be hit. Colliders grown to
     cover the turret, hover skirt added, ride height lowered; `hitheight.mjs`
     added. Uncovered a Rail imbalance that the bug had been masking.
