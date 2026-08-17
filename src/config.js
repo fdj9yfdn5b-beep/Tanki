@@ -271,6 +271,14 @@ export const FX = {
   beamLife: 0.28,       // s. Hitscan tracer dwell.
 };
 
+// Seconds of invulnerability after respawning.
+//
+// Spawns are fixed points on a ring, so anyone who knows the map can park a gun
+// on one; without this you die, wait, and die again to the same shot with no
+// move available to you. It ends EARLY the moment the protected tank fires —
+// otherwise it is not protection, it is two free seconds of shooting.
+export const SPAWN_PROTECTION = 2.0;
+
 // Scoring. An assist is credited to anyone who damaged the victim recently but
 // did not land the final blow — without it, focusing a target down as a team
 // rewards only whoever happened to fire last.

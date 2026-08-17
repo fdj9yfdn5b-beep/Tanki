@@ -124,11 +124,11 @@ let player = null;
 let net = null;
 
 const BOT_SETUPS = [
-  { hull: 'wasp', weapon: 'twin', skill: 0.45, name: 'Vega' },
-  { hull: 'hunter', weapon: 'thunder', skill: 0.6, name: 'Rook' },
-  { hull: 'mammoth', weapon: 'rail', skill: 0.72, name: 'Iron' },
-  { hull: 'hunter', weapon: 'rail', skill: 0.5, name: 'Nyx' },
-  { hull: 'wasp', weapon: 'thunder', skill: 0.55, name: 'Ash' },
+  { hull: 'wasp', weapon: 'twin', skill: 0.45, name: 'Messi' },
+  { hull: 'hunter', weapon: 'thunder', skill: 0.6, name: 'Rihanna' },
+  { hull: 'mammoth', weapon: 'rail', skill: 0.72, name: 'Musk' },
+  { hull: 'hunter', weapon: 'rail', skill: 0.5, name: 'Zendaya' },
+  { hull: 'wasp', weapon: 'thunder', skill: 0.55, name: 'Drake' },
 ];
 
 /**
@@ -360,7 +360,18 @@ function targetOnTheLine() {
   return !!target && target !== player && target.alive;
 }
 
+// A text field beats the game to the keyboard.
+//
+// Without this the global handler swallows every game key, so typing a callsign
+// containing z or x — or 1, 2, 3, q, e, b, o, p — silently did nothing, and
+// worse, quietly switched weapons and toggled bloom behind the loadout screen.
+const typing = () => {
+  const el = document.activeElement;
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+};
+
 addEventListener('keydown', (e) => {
+  if (typing()) return;
   keys.add(e.code);
   if (e.code === 'KeyP') {
     const el = document.getElementById('perf');

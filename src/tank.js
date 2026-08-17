@@ -103,6 +103,7 @@ export class Tank {
     this.recoilOffset = 0;
     this.turretVel = 0;
     this.turnVel = 0;
+    this.spawnGuard = 0;     // seconds of post-respawn invulnerability left
 
     this._buildBody();
     this._buildRig();
@@ -497,6 +498,9 @@ export class Tank {
 
   takeDamage(amount, from) {
     if (!this.alive) return false;
+    // Just respawned: shrug it off entirely. Reducing the damage instead would
+    // still let a camped spawn whittle someone down before they can move.
+    if (this.spawnGuard > 0) return false;
     this.hp = Math.max(0, this.hp - amount);
 
     // Remember who is shooting us. Without this a bot happily keeps grinding on
@@ -509,6 +513,19 @@ export class Tank {
     this._syncHealthBar();
     if (this.hp <= 0) {
       this.alive = false;
+      // A corpse must stop being solid.
+      //
+      // Nothing used to disable this, so a killed tank left its full collider
+      // standing exactly where it died until it respawned. Everything that
+      // casts a ray hits it: `_fireHitscan` finds a target that is not `alive`,
+      // falls through to the terrain branch and ENDS THE BEAM THERE for no
+      // damage; projectiles are consumed by it the same way. So a shot fired
+      // through the spot where someone just died simply stopped in mid-air.
+      // That is "the shot stops where another tank was and died", and it is a
+      // large part of "half my shots take no health off" — the corpse is
+      // invisible, so the shot looks like it vanished for no reason. It was
+      // also an invisible wall to drive into.
+      this.collider.setEnabled(false);
       // Scoring belongs to Match.onKill, which also credits assists and keeps
       // score consistent with kills. Incrementing here as well double-counted
       // every kill — total kills came out at exactly 2x total deaths, while
@@ -518,14 +535,49 @@ export class Tank {
     return false;
   }
 
-  respawn(pos) {
+  /**
+   * Come back clean.
+   *
+   * This used to set position, velocity and hp and nothing else, so a tank
+   * returned wearing the exact pose it died in — hull yaw, turret angle, the
+   * traverse it was mid-way through, a half-charged Rail, the recoil dip of its
+   * last shot. Respawning sideways-on with the gun pointing behind you is not a
+   * fresh start, and it reads as the game forgetting to reset.
+   *
+   * @param yaw  facing to come back on. Defaults to keeping the current one.
+   */
+  respawn(pos, yaw = null) {
     this.hp = this.maxHp;
     this.alive = true;
     this._syncHealthBar();
+
     this.body.setTranslation({ x: pos.x, y: pos.y, z: pos.z }, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    if (yaw !== null) {
+      this.body.setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }, true);
+    }
+
+    // Everything the tank was in the middle of doing when it died.
+    this.turret.rotation.y = 0;
+    this.turretVel = 0;
+    this.turnVel = 0;
+    this.spawnGuard = 0;     // seconds of post-respawn invulnerability left
+    this.cooldown = 0;
+    this.charge = 0;
+    this.recoilOffset = 0;
+    this.aimError = 0;
+    this.threatFrom = null;
+    this.threatTimer = 0;
+
+    this.collider.setEnabled(true);      // solid again — see takeDamage
     this.root.visible = true;
+    this.syncTransform();
+    this.syncChargeVisual();
+    // Both poses on the new spot, so the renderer does not interpolate across
+    // the teleport and draw the tank streaking in from where it died.
+    this.capturePose();
+    this.capturePose();
   }
 
   // ── Per-frame ─────────────────────────────────────────────────────────────

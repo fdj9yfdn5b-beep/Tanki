@@ -71,6 +71,9 @@ export class Combat {
 
     tank.cooldown = w.fireInterval;
     tank.recoilOffset = w.recoil * 0.12;
+    // Firing gives up spawn protection. Otherwise it is not protection, it is
+    // two seconds of free shooting from behind a shield.
+    tank.spawnGuard = 0;
 
     const origin = tank.muzzlePosition;
     const dir = tank.aimDirection();

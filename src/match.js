@@ -3,7 +3,7 @@ import { buildArena, spawnPoints } from './arena.js';
 import { Tank } from './tank.js';
 import { Combat } from './weapons.js';
 import { seed } from './rng.js';
-import { SCORE } from './config.js';
+import { SCORE, SPAWN_PROTECTION } from './config.js';
 
 // The authoritative match simulation, shared verbatim by server and client.
 //
@@ -99,7 +99,10 @@ export class Match {
     tank.deaths = 0;
     tank.score = 0;
     tank.damageFrom = new Map();
-    tank.respawn(this.spawns[this.tanks.size % this.spawns.length]);
+    const spot = this.spawns[this.tanks.size % this.spawns.length];
+    tank.respawn(spot, Math.atan2(-spot.x, -spot.z));
+    // Joining is a spawn like any other, and the same camper is still there.
+    tank.spawnGuard = SPAWN_PROTECTION;
     this.combat.register(tank);
     this.tanks.set(id, tank);
     return tank;
@@ -163,11 +166,15 @@ export class Match {
     this.tick++;
 
     for (const tank of this.tanks.values()) {
+      if (tank.spawnGuard > 0) tank.spawnGuard = Math.max(0, tank.spawnGuard - TICK_DT);
       if (!tank.alive && tank.deadAt != null
           && (this.tick - tank.deadAt) * TICK_DT > RESPAWN_DELAY) {
         tank.deadAt = null;
         const spot = this.spawns[this.tick % this.spawns.length];
-        tank.respawn(spot);
+        // Spawns sit on a ring facing outward at nothing. Come back looking at
+        // the middle of the map, which is where the game is.
+        tank.respawn(spot, Math.atan2(-spot.x, -spot.z));
+        tank.spawnGuard = SPAWN_PROTECTION;
         this.events.push({ e: 'spawn', id: tank.netId });
       }
     }
@@ -192,6 +199,7 @@ export class Match {
         a: tank.alive ? 1 : 0,
         c: round(tank.charge, 2),
         cd: round(tank.cooldown, 2),
+        sg: round(tank.spawnGuard, 2),
         k: tank.kills ?? 0,
         as: tank.assists ?? 0,
         de: tank.deaths ?? 0,
@@ -231,6 +239,7 @@ function applyTankState(tank, s) {
   tank.alive = !!s.a;
   tank.charge = s.c;
   tank.cooldown = s.cd;
+  tank.spawnGuard = s.sg ?? 0;
   if (s.k !== undefined) {
     tank.kills = s.k; tank.assists = s.as; tank.deaths = s.de; tank.score = s.sc;
   }

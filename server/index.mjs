@@ -37,11 +37,11 @@ const bots = [];
 const roster = new Map();    // id -> { name, hull, weapon } for clients AND bots
 
 const BOT_SETUPS = [
-  { hull: 'wasp', weapon: 'twin', skill: 0.45, name: 'Vega' },
-  { hull: 'hunter', weapon: 'thunder', skill: 0.6, name: 'Rook' },
-  { hull: 'mammoth', weapon: 'rail', skill: 0.72, name: 'Iron' },
-  { hull: 'hunter', weapon: 'rail', skill: 0.5, name: 'Nyx' },
-  { hull: 'wasp', weapon: 'thunder', skill: 0.55, name: 'Ash' },
+  { hull: 'wasp', weapon: 'twin', skill: 0.45, name: 'Messi' },
+  { hull: 'hunter', weapon: 'thunder', skill: 0.6, name: 'Rihanna' },
+  { hull: 'mammoth', weapon: 'rail', skill: 0.72, name: 'Musk' },
+  { hull: 'hunter', weapon: 'rail', skill: 0.5, name: 'Zendaya' },
+  { hull: 'wasp', weapon: 'thunder', skill: 0.55, name: 'Drake' },
   { hull: 'mammoth', weapon: 'twin', skill: 0.65, name: 'Brick' },
 ];
 
