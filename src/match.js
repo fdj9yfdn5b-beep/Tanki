@@ -67,12 +67,17 @@ export class Match {
     // Shots are broadcast so every other client can draw them. Without this a
     // player's health drops with nothing visibly shooting at them — the shooter
     // sees its own tracer, nobody else does.
-    this.combat.onFire = (tank, origin, dir) => {
-      this.events.push({
+    this.combat.onFire = (tank, origin, dir, end = null) => {
+      const ev = {
         e: 'fire', id: tank.netId, w: tank.weaponKey,
         ox: round(origin.x), oy: round(origin.y), oz: round(origin.z),
         dx: round(dir.x, 3), dy: round(dir.y, 3), dz: round(dir.z, 3),
-      });
+      };
+      // Hitscan carries where the beam actually stopped. Without it each client
+      // guesses by raycasting its own world and the beam ends in the wrong
+      // place — or nowhere.
+      if (end) { ev.ex = round(end.x); ev.ey = round(end.y); ev.ez = round(end.z); }
+      this.events.push(ev);
     };
 
     this.combat.onHit = (target, amount, source) => {

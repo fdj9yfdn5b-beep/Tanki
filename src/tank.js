@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HULLS, WEAPONS } from './config.js';
+import { HULLS, WEAPONS, TURN_BY_SPEED } from './config.js';
 import { metalTexture, treadTexture } from './textures.js';
 
 // One tank. Player and bot go through the same `update(dt, input)` path —
@@ -702,8 +702,12 @@ export class Tank {
       // almost immediately, a hard sustained turn swings a little past. Scaled
       // by hull mass, which is what makes a Mammoth feel like a Mammoth.
       const inertia = Math.sqrt(this.hull.mass / HULL_REFERENCE_MASS);
-      const want = -steer * this.hull.turnRate;
-      const ramp = this.hull.turnRate
+      // Turn rate falls off with speed — see TURN_BY_SPEED.
+      const speedFrac = Math.min(1, Math.hypot(newVel.x, newVel.z) / this.hull.maxSpeed);
+      const turnRate = this.hull.turnRate
+        * (TURN_BY_SPEED.atRest + (TURN_BY_SPEED.atTopSpeed - TURN_BY_SPEED.atRest) * speedFrac);
+      const want = -steer * turnRate;
+      const ramp = turnRate
         / ((want === 0 ? HULL_TURN_SETTLE : HULL_TURN_SPIN_UP) * inertia);
       this.turnVel = approach(this.turnVel, want, ramp * dt);
       this.body.setAngvel({ x: 0, y: this.turnVel, z: 0 }, true);

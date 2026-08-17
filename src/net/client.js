@@ -6,6 +6,11 @@ import {
   INTERP_DELAY, packInput,
 } from './protocol.js';
 
+// Metres of movement between two snapshots that can only be a teleport. The
+// fastest hull does 16 m/s and snapshots are ~50ms apart, so about 0.8m is the
+// physical maximum; anything past a few metres is a respawn.
+const TELEPORT_JUMP = 6;
+
 /**
  * Client-side netcode: prediction, reconciliation, interpolation.
  *
@@ -252,10 +257,19 @@ export class NetClient {
       if (!tank) continue;
       const sa = a.tanks.find((t) => t.id === sb.id) ?? sb;
 
+      // A respawn TELEPORTS the tank. Blending across that draws it streaking
+      // over the map from where it died to where it came back, which is the
+      // "tanks blink or shoot off to a new place when they die" report. No tank
+      // covers this distance in one snapshot under its own power, so a jump
+      // this large is by definition a teleport and must be snapped, not blended.
+      const jumped = Math.abs(sb.x - sa.x) > TELEPORT_JUMP
+        || Math.abs(sb.z - sa.z) > TELEPORT_JUMP;
+      const g = jumped ? 1 : f;
+
       tank.body.setTranslation({
-        x: lerp(sa.x, sb.x, f), y: lerp(sa.y, sb.y, f), z: lerp(sa.z, sb.z, f),
+        x: lerp(sa.x, sb.x, g), y: lerp(sa.y, sb.y, g), z: lerp(sa.z, sb.z, g),
       }, false);
-      tank.body.setRotation(slerpY(sa, sb, f), false);
+      tank.body.setRotation(slerpY(sa, sb, jumped ? 1 : f), false);
       tank.turret.rotation.y = lerpAngle(sa.ty, sb.ty, f);
 
       // Velocity for evasion spread, differentiated from the snapshot pair
@@ -267,7 +281,15 @@ export class NetClient {
         : { x: 0, y: 0, z: 0 };
 
       tank.hp = sb.hp;
+      const wasAlive = tank.alive;
       tank.alive = !!sb.a;
+      // Dead tanks are hidden outright rather than left lying on the field: the
+      // corpse has no collider any more (see Tank.takeDamage), so leaving the
+      // mesh there shows something you can shoot through. Coming back, both
+      // poses are reset onto the new spot so the renderer does not interpolate
+      // in from where it died.
+      tank.root.visible = tank.alive;
+      if (tank.alive && !wasAlive) { tank.syncTransform(); tank.capturePose?.(); tank.capturePose?.(); }
       // Charge is in every snapshot but was being dropped here, and the ring is
       // only redrawn by Tank.update(), which remote tanks never get. Between the
       // two, a charging enemy Rail looked identical to an idle one — the single
@@ -275,6 +297,7 @@ export class NetClient {
       // warning at all. Discrete like hp, not interpolated: it is read off the
       // newer snapshot rather than blended.
       tank.charge = sb.c ?? 0;
+      tank.spawnGuard = sb.sg ?? 0;
       tank._syncHealthBar?.();
       tank.syncChargeVisual?.();
       // Push the interpolated body transform onto the visual rig. Interpolation

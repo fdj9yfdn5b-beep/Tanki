@@ -102,7 +102,7 @@ export class Combat {
     // Broadcasting the SPREAD direction, not the aim direction: observers should
     // see the shot the server actually traced, or their impact effects land in a
     // different place from the damage.
-    this.onFire?.(tank, origin, shot);
+    this.onFire?.(tank, origin, shot, w.kind === 'hitscan' ? this._lastBeamEnd : null);
     return true;
   }
 
@@ -110,18 +110,25 @@ export class Combat {
    * Draw a shot fired by somebody else, from the server's report of it.
    * Purely cosmetic — no damage, no physics.
    */
-  renderRemoteShot(weaponKey, origin, dir) {
+  renderRemoteShot(weaponKey, origin, dir, end = null) {
     const w = WEAPONS[weaponKey];
     if (!w || !this.scene) return;
     this.fx?.muzzleFlash(origin, dir, w.color);
     if (w.kind === 'hitscan') {
-      const ray = new this.RAPIER.Ray(
-        { x: origin.x, y: origin.y, z: origin.z }, { x: dir.x, y: dir.y, z: dir.z });
-      const hit = this.world.castRay(ray, 200, true);
-      const dist = hit ? impactDistance(hit) : 200;
-      const end = origin.clone().addScaledVector(dir, dist);
-      this.fx?.beam(origin, end, w.color);
-      this.fx?.impact(end, dir.clone().negate(), w.color, 1);
+      // Use the endpoint the SERVER resolved when it is given. Re-raycasting
+      // locally is what made a rail shot stop halfway to its target, or vanish
+      // entirely: the beam ended at whatever this client had on the line, which
+      // includes corpses and tanks that have since moved. Falling back to a
+      // local cast only matters for an older server.
+      let stop = end;
+      if (!stop) {
+        const ray = new this.RAPIER.Ray(
+          { x: origin.x, y: origin.y, z: origin.z }, { x: dir.x, y: dir.y, z: dir.z });
+        const hit = this.world.castRay(ray, 200, true);
+        stop = origin.clone().addScaledVector(dir, hit ? impactDistance(hit) : 200);
+      }
+      this.fx?.beam(origin, stop, w.color);
+      this.fx?.impact(stop, dir.clone().negate(), w.color, 1);
       return;
     }
     this._spawnProjectile(w, origin, dir.clone(), null, true);
@@ -254,6 +261,12 @@ export class Combat {
 
     this.fx?.beam(origin, end, w.color);
     this._logShot(w, tank);
+    // Remember where the authoritative beam stopped, so the fire broadcast can
+    // carry it. Every other client otherwise re-raycasts against ITS OWN world
+    // to decide where to draw the end — and stops the beam at whatever that
+    // client happens to have in the way, including a tank that has since died
+    // or moved. See renderRemoteShot.
+    this._lastBeamEnd = end;
   }
 
   // ── Damage ────────────────────────────────────────────────────────────────

@@ -276,7 +276,15 @@ function startOnline(lo, status) {
           combat.renderRemoteShot(
             e.w,
             new THREE.Vector3(e.ox, e.oy, e.oz),
-            new THREE.Vector3(e.dx, e.dy, e.dz));
+            new THREE.Vector3(e.dx, e.dy, e.dz),
+            e.ex !== undefined ? new THREE.Vector3(e.ex, e.ey, e.ez) : null);
+          // Somebody else's shot also tells us what they are holding. A remote
+          // tank is built once at join and its barrels were never rebuilt, so it
+          // kept its original weapon forever — through switches, through death
+          // and respawn. This is the cheapest correct place to notice: every
+          // shot names its weapon.
+          const shooter = match.tanks.get(e.id);
+          if (shooter && shooter.weaponKey !== e.w) shooter.setWeapon(e.w);
         }
         return;
       }
@@ -575,6 +583,16 @@ const CAM_ELEV_RATE = 0.9;   // rad/s
 // jitter, network reconciliation — so it can be gentle without reintroducing
 // aim lag. Lower = calmer camera, slower recovery from a shunt.
 const CAM_YAW_CATCHUP = 9;
+
+// While dead, the camera lifts away and travels to wherever you come back.
+//
+// Cutting straight to the new spawn gives no sense of having moved, and the
+// respawn point is the one piece of information a dead player actually wants.
+// Pulling up and drifting across shows them where they are about to be, and how
+// the fight looks from above on the way.
+const DEAD_CAM_ELEV = 1.05;      // rad, looking well down
+const DEAD_CAM_BOOM = 26;        // m back
+const DEAD_PIVOT_RATE = 1.6;     // slow enough that the travel reads as flight
 // Running total of COMMANDED barrel rotation, plus the value it held at each of
 // the last two physics steps — mirroring the tank's own pose snapshots so the
 // camera can be interpolated by the same alpha.
@@ -594,6 +612,7 @@ let camElev = CAM_BASE_ELEV;
 
 function updateCamera(dt) {
   if (!player) return;
+  const dead = !player.alive;
   // The RENDERED position, not the physics one. The rig has already been placed
   // between physics frames; following the body instead would leave the camera
   // chasing a target that jumps 60 times a second, which is the judder this is
@@ -681,7 +700,8 @@ function updateCamera(dt) {
   // Smoothing after the collision clamp would let the camera drift back into
   // whatever it was just pushed out of.
   const pivotGoal = p.clone().setY(p.y + CAM_PIVOT_Y);
-  camPivot.lerp(pivotGoal, 1 - Math.exp(-9 * dt));
+  // Slow while dead so the trip to the new spawn is a flight rather than a cut.
+  camPivot.lerp(pivotGoal, 1 - Math.exp(-(dead ? DEAD_PIVOT_RATE : 9) * dt));
 
   const back = new THREE.Vector3(-Math.sin(camYaw), 0, -Math.cos(camYaw));
 
@@ -698,8 +718,12 @@ function updateCamera(dt) {
   // is faded out instead (see fadeOccluders). Moving the camera to solve an
   // occlusion problem moves the picture; making the occluder transparent solves
   // it and leaves the picture alone.
-  camElev += (camElevWanted - camElev) * (1 - Math.exp(-6 * dt));
-  camBoom += (CAM_LEN - camBoom) * (1 - Math.exp(-6 * dt));
+  const elevGoal = dead ? DEAD_CAM_ELEV : camElevWanted;
+  const boomGoal = dead ? DEAD_CAM_BOOM : CAM_LEN;
+  // Rising is quicker than coming back down: the lift should happen while the
+  // explosion is still on screen, the descent should settle you into the fight.
+  camElev += (elevGoal - camElev) * (1 - Math.exp((dead ? -3.5 : -2.2) * dt));
+  camBoom += (boomGoal - camBoom) * (1 - Math.exp((dead ? -3.5 : -2.2) * dt));
 
   const dir = back.clone().multiplyScalar(Math.cos(camElev)).setY(Math.sin(camElev)).normalize();
   camPos.copy(camPivot).addScaledVector(dir, camBoom);

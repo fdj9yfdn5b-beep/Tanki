@@ -271,6 +271,18 @@ export const FX = {
   beamLife: 0.28,       // s. Hitscan tracer dwell.
 };
 
+// How hull turn rate scales with how fast you are going.
+//
+// A tracked tank pivots hardest when it is barely moving and washes out into a
+// wide arc at speed — that is what tracks do, and a tank that yaws at its full
+// rate flat out reads as a hovercraft. `atRest` is the multiplier standing
+// still, `atTopSpeed` the multiplier at maxSpeed, interpolated between.
+//
+// Above 1.0 at rest on purpose: a neutral-steer pivot is the one thing tracks
+// are genuinely better at than wheels, and it is what makes a heavy hull able
+// to bring its gun round in a corner.
+export const TURN_BY_SPEED = { atRest: 1.25, atTopSpeed: 0.6 };
+
 // Seconds of invulnerability after respawning.
 //
 // Spawns are fixed points on a ring, so anyone who knows the map can park a gun
