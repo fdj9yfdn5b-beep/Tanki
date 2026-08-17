@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- `user-scalable=no` because a two-finger pinch is a real input here (two
+       thumbs on two sticks) and must not zoom the page. `viewport-fit=cover`
+       plus the safe-area insets in the CSS keeps the controls clear of a
+       notch and of the home indicator. -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0d1117" />
+  <title>TANKI — prototype</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="loading">LOADING…</div>
+
+  <!-- Pre-match loadout. The server has always accepted a per-player hull, name
+       and weapon in C_HELLO and broadcast them to everyone else; the client just
+       never asked, so every human joined as a Hunter called "You". The cards are
+       built from config.js at runtime rather than written out here, so they
+       cannot drift from the numbers the game actually uses. -->
+  <div id="loadout" hidden>
+    <div class="lo-panel">
+      <div class="lo-title">TANKI</div>
+
+      <label class="lo-label" for="lo-name">CALLSIGN</label>
+      <input id="lo-name" maxlength="16" autocomplete="off" spellcheck="false"
+             placeholder="pick a name" />
+
+      <div class="lo-label">HULL</div>
+      <div class="lo-row" id="lo-hulls"></div>
+
+      <div class="lo-label">WEAPON</div>
+      <div class="lo-row" id="lo-weapons"></div>
+
+      <button id="lo-join">JOIN</button>
+      <div class="lo-foot" id="lo-foot"></div>
+    </div>
+  </div>
+
+  <div id="scoreboard"></div>
+  <div id="feed"></div>
+  <div id="perf"></div>
+
+  <div id="respawn">RESPAWNING…</div>
+
+  <div id="hud">
+    <div id="left">
+      <div class="bar-wrap">
+        <div id="hp-fill"></div>
+        <span id="hp-text">280 / 280</span>
+      </div>
+      <div id="charge"><div id="charge-fill"></div></div>
+      <div id="charge-hint"></div>
+    </div>
+
+    <div id="center">
+      <div id="weapon-block">
+        <span id="weapon-name">Twin</span>
+        <span id="weapon-band">CLOSE</span>
+      </div>
+      <div id="slots">
+        <button class="slot active" data-weapon="twin"><b>1</b> Twin</button>
+        <button class="slot" data-weapon="thunder"><b>2</b> Thunder</button>
+        <button class="slot" data-weapon="rail"><b>3</b> Rail</button>
+      </div>
+    </div>
+
+    <div id="right">
+      <div class="stat"><span>KILLS</span><b id="kills">0</b></div>
+    </div>
+  </div>
+
+  <div id="help">
+    <b>WASD</b> drive · <b>Z X</b> turret · <b>Q E</b> camera · <b>space</b> fire · <b>1 2 3</b> weapon
+    · <b>P</b> perf · <b>B</b> bloom · <b>O</b> shadows
+  </div>
+
+  <!-- Touch controls. Shown only on a coarse-pointer device (or ?touch=1). The
+       zones are large invisible halves; the stick base appears under the thumb
+       wherever it lands, so nothing has to be found by feel. -->
+  <div id="touch" hidden>
+    <div class="tc-zone" id="tc-move">
+      <div class="tc-base"><div class="tc-knob"></div></div>
+    </div>
+    <div class="tc-zone" id="tc-aim">
+      <div class="tc-base"><div class="tc-knob"></div></div>
+    </div>
+    <button id="tc-auto" class="tc-chip">AUTO</button>
+    <button id="tc-fire">FIRE</button>
+  </div>
+
+  <div id="rotate">↻<span>TURN YOUR PHONE SIDEWAYS</span></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

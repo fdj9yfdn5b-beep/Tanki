@@ -1,0 +1,34 @@
+# Fly.io config.
+#
+# CRITICAL: this server is STATEFUL — the match lives in one process's memory.
+# Two instances means two separate arenas and players silently split between
+# them, so this must never scale past one machine. auto_stop is off for the same
+# reason: stopping the machine ends the match everyone is in.
+app = "tanki-adiel"
+primary_region = "fra"          # Frankfurt — lowest latency to Israel of the EU regions
+
+[build]
+
+[http_service]
+  internal_port = 8099
+  force_https = true            # gives wss:// for free, which the client needs
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  max_machines_running = 1
+
+  [http_service.http_options]
+    # WebSockets are long-lived; the default idle timeout would cut them.
+    idle_timeout = 900
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

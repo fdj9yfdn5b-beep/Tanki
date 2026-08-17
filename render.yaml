@@ -1,0 +1,31 @@
+# Render blueprint.
+#
+# Free tier, so the trade is explicit: the instance is SUSPENDED after ~15
+# minutes with no inbound traffic, and the next request has to start it again —
+# roughly a minute. Two consequences worth knowing before anyone is confused by
+# them:
+#
+#   1. The first person through the door waits. The page load itself blocks
+#      while the container starts, and `net.connect()` retries for two minutes
+#      with a "waking the server" message rather than failing on the first try.
+#   2. Sleeping ENDS THE MATCH. This server keeps the arena in memory (see the
+#      note in fly.toml), so a suspend resets scores and everyone respawns. For
+#      a game played in sessions that is fine; it is not a persistent world.
+#
+# Traffic keeps it awake, so it only sleeps once everyone has actually stopped
+# playing. Measured egress is ~20 KB/s per player — about 73 MB per player-hour,
+# nowhere near any limit.
+services:
+  - type: web
+    name: tanki
+    runtime: docker
+    plan: free
+    # Closest free region to Israel; oregon/ohio/singapore are the alternatives.
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # Server-side bots, so the first person to arrive has something to fight.
+      - key: BOTS
+        value: "4"

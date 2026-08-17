@@ -1,0 +1,495 @@
+:root {
+  --accent: #6fd3ff;
+  --panel: rgba(13, 17, 23, 0.72);
+  --line: rgba(140, 170, 200, 0.22);
+  --text: #e6edf3;
+  --muted: #8b98a8;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #0d1117;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  user-select: none;
+}
+
+#game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+
+#loading {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: #0d1117;
+  color: var(--muted);
+  letter-spacing: 0.4em;
+  font-size: 14px;
+  z-index: 100;
+}
+
+/* ── Touch controls ───────────────────────────────────────────────────────── */
+/* `touch-action: none` everywhere that takes a touch: without it the browser
+   spends ~300ms deciding whether a drag is a scroll before handing it over, and
+   a two-thumb drag becomes a pinch-zoom. */
+#touch { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+#touch[hidden] { display: none; }
+body.touch { touch-action: none; overscroll-behavior: none; }
+body.touch #help { display: none; }
+
+.tc-zone {
+  position: absolute;
+  bottom: 0;
+  height: 62%;
+  width: 42%;
+  pointer-events: auto;
+  touch-action: none;
+}
+#tc-move { left: 0; }
+#tc-aim { right: 0; }
+
+/* Positioned in viewport coordinates at the touch point, so it must not be
+   inside a transformed ancestor. */
+.tc-base {
+  position: fixed;
+  width: 124px; height: 124px;
+  margin: -62px 0 0 -62px;
+  border-radius: 50%;
+  border: 1px solid rgba(140, 170, 200, 0.3);
+  background: rgba(13, 17, 23, 0.32);
+  opacity: 0;
+  transition: opacity 0.12s;
+  pointer-events: none;
+}
+.tc-knob {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 52px; height: 52px;
+  margin: 0; transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(111, 211, 255, 0.5);
+  box-shadow: 0 0 18px -4px var(--accent);
+}
+
+#tc-fire {
+  position: absolute;
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  background: rgba(13, 17, 23, 0.6);
+  border: 2px solid var(--line);
+  color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 700;
+  letter-spacing: 0.18em;
+}
+#tc-fire.held { background: var(--accent); color: #06121a; border-color: var(--accent); }
+/* Lights up when the barrel is on somebody — with auto-fire on it is the only
+   feedback that the gun is about to go off by itself. */
+#tc-fire.on-target { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 22px -4px var(--accent); }
+
+.tc-chip {
+  position: absolute;
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(206px + env(safe-area-inset-bottom));
+  width: 96px;
+  padding: 8px 0;
+  border-radius: 20px;
+  pointer-events: auto;
+  touch-action: none;
+  background: rgba(13, 17, 23, 0.6);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font: inherit; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.tc-chip.on { color: var(--accent); border-color: var(--accent); }
+
+/* A 3D arena in a portrait phone is a letterbox with the controls on top of the
+   fight. Ask once rather than trying to lay it out twice. */
+#rotate { display: none; }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate {
+    position: fixed; inset: 0; z-index: 300;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: #0d1117;
+    color: var(--muted);
+    font-size: 44px;
+  }
+  #rotate span { font-size: 12px; letter-spacing: 0.24em; }
+}
+
+/* ── Loadout ──────────────────────────────────────────────────────────────── */
+#loadout {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: #0d1117;
+  z-index: 200;
+  overflow: auto;
+  padding: 24px;
+}
+#loadout[hidden] { display: none; }
+
+.lo-panel {
+  width: min(720px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 28px 30px 24px;
+}
+
+.lo-title {
+  font-size: 22px; font-weight: 700;
+  letter-spacing: 0.42em;
+  color: var(--accent);
+  margin-bottom: 22px;
+}
+
+.lo-label {
+  display: block;
+  font-size: 9px; letter-spacing: 0.22em;
+  color: var(--muted);
+  margin: 18px 0 8px;
+}
+.lo-label:first-of-type { margin-top: 0; }
+
+#lo-name {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+#lo-name:focus { outline: none; border-color: var(--accent); }
+#lo-name::placeholder { color: var(--muted); letter-spacing: 0.04em; }
+
+/* Cards wrap rather than scroll: this screen is the one thing a new player sees
+   on whatever device the link was opened on. */
+.lo-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.lo-card {
+  flex: 1 1 190px;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.lo-card:hover { color: var(--text); }
+.lo-card.active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 18px -6px var(--accent);
+}
+
+.lo-card .lo-name {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+/* The swatch is the hull's real colour from config, so the card matches the
+   tank that shows up on the field. */
+.lo-card .lo-swatch {
+  width: 9px; height: 9px; border-radius: 2px; flex: none;
+}
+.lo-card .lo-role { font-size: 10px; letter-spacing: 0.14em; color: var(--accent); }
+.lo-card .lo-stats { margin-top: 9px; display: grid; gap: 3px; }
+.lo-card .lo-stat { display: flex; justify-content: space-between; font-size: 11px; }
+.lo-card .lo-stat b { color: var(--text); font-weight: 600; }
+
+#lo-join {
+  width: 100%;
+  margin-top: 24px;
+  padding: 13px;
+  background: var(--accent);
+  border: none; border-radius: 7px;
+  color: #06121a;
+  font: inherit; font-size: 14px; font-weight: 700;
+  letter-spacing: 0.24em;
+  cursor: pointer;
+}
+#lo-join:hover { filter: brightness(1.08); }
+#lo-join:disabled { background: var(--line); color: var(--muted); cursor: default; }
+
+.lo-foot {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  min-height: 15px;
+}
+
+/* ── HUD ──────────────────────────────────────────────────────────────────── */
+#hud {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 18px 24px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  pointer-events: none;
+}
+
+#left { width: 300px; }
+
+.bar-wrap {
+  position: relative;
+  height: 26px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#hp-fill {
+  height: 100%;
+  width: 100%;
+  background: #4ade80;
+  transition: width 0.12s linear, background 0.2s;
+}
+
+#hp-text {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #0d1117;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+#charge {
+  display: none;
+  margin-top: 6px;
+  height: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+#charge-hint {
+  display: none;
+  margin-top: 5px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+#charge-fill {
+  height: 100%; width: 0%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+}
+
+#center { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+
+#weapon-block {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 6px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+#weapon-name {
+  font-size: 17px; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+#weapon-band { font-size: 10px; letter-spacing: 0.2em; color: var(--muted); }
+
+#slots { display: flex; gap: 6px; pointer-events: auto; }
+
+.slot {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 7px 13px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.slot b { color: #55606e; margin-right: 5px; }
+.slot:hover { color: var(--text); }
+
+.slot.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 14px -4px var(--accent);
+}
+
+.slot.active b { color: var(--accent); }
+
+#right { width: 300px; display: flex; justify-content: flex-end; }
+
+.stat {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  padding: 6px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.stat span { font-size: 9px; letter-spacing: 0.22em; color: var(--muted); }
+.stat b { font-size: 21px; line-height: 1; }
+
+/* ── Scoreboard ───────────────────────────────────────────────────────────── */
+#scoreboard {
+  position: fixed;
+  top: 18px; right: 24px;
+  min-width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 8px 10px;
+  pointer-events: none;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+#scoreboard table { width: 100%; border-collapse: collapse; }
+
+#scoreboard th {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  font-weight: 400;
+  text-align: right;
+  padding: 0 0 4px 8px;
+}
+
+#scoreboard th.n, #scoreboard td.n { text-align: left; padding-left: 0; }
+
+#scoreboard td {
+  text-align: right;
+  padding: 2px 0 2px 8px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+#scoreboard tr.me td { color: var(--accent); font-weight: 700; }
+#scoreboard td.sc { font-weight: 700; }
+#scoreboard td.dim { color: var(--muted); }
+
+/* ── Kill feed ────────────────────────────────────────────────────────────── */
+#feed {
+  position: fixed;
+  top: 130px; right: 24px;
+  display: flex; flex-direction: column; gap: 4px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.feed-line {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  padding: 5px 11px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  animation: slide 0.18s ease-out;
+}
+
+@keyframes slide {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Misc ─────────────────────────────────────────────────────────────────── */
+#respawn {
+  display: none;
+  position: fixed;
+  left: 50%; top: 44%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  letter-spacing: 0.3em;
+  color: #f87171;
+  text-shadow: 0 0 24px rgba(248, 113, 113, 0.5);
+  pointer-events: none;
+}
+
+#perf {
+  position: fixed;
+  top: 52px; left: 24px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #7ee787;
+  padding: 5px 11px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: pre;
+}
+
+#help {
+  position: fixed;
+  top: 18px; left: 24px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 7px 13px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+#help b { color: var(--text); }
+
+/* ── Responsive overrides ─────────────────────────────────────────────────────
+   Last in the file on purpose. These carry the same specificity as the base
+   rules they replace, so the cascade decides — put them anywhere earlier and
+   the desktop rules quietly win and the phone layout never appears. (It did.)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Phone-sized HUD. The desktop layout assumes a wide window and enough vertical
+   room that the bottom bar is nowhere near a thumb. */
+@media (pointer: coarse) {
+  #hud { padding: 0 calc(14px + env(safe-area-inset-left)) calc(10px + env(safe-area-inset-bottom)); }
+  #slots { display: none; }              /* weapon is chosen on the loadout screen */
+  #scoreboard { font-size: 10px; max-width: 42vw; }
+  #left { min-width: 128px; }
+  .bar-wrap { width: 128px; }
+  #weapon-block { padding: 4px 10px; }
+  #feed { font-size: 10px; }
+}
+
+/* A phone held sideways is ~360px tall. The loadout screen has to FIT that —
+   pushing JOIN below the fold, on the one screen a new player has to get
+   through, is how you lose them before the game has started. */
+@media (max-height: 470px) {
+  #loadout { padding: 8px; align-items: flex-start; }
+  .lo-panel { padding: 12px 14px; }
+  .lo-title { font-size: 15px; letter-spacing: 0.3em; margin-bottom: 8px; }
+  .lo-label { margin: 9px 0 4px; }
+  #lo-name { padding: 6px 10px; font-size: 13px; }
+  .lo-row { gap: 7px; }
+  .lo-card { flex-basis: 118px; padding: 7px 9px; }
+  .lo-card .lo-name { font-size: 12px; gap: 6px; margin-bottom: 1px; }
+  .lo-card .lo-role { font-size: 8px; }
+  .lo-card .lo-stats { margin-top: 5px; gap: 1px; }
+  .lo-card .lo-stat { font-size: 9px; }
+  #lo-join { margin-top: 11px; padding: 10px; font-size: 12px; }
+  .lo-foot { margin-top: 6px; font-size: 10px; min-height: 12px; }
+}
