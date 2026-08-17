@@ -564,6 +564,7 @@ const CAM_ELEV_RATE = 0.9;   // rad/s
 // jitter, network reconciliation — so it can be gentle without reintroducing
 // aim lag. Lower = calmer camera, slower recovery from a shunt.
 const CAM_YAW_CATCHUP = 9;
+let camYawFeed = 0;          // rotation banked by simulate(), consumed per frame
 let camElevWanted = CAM_BASE_ELEV;
 
 const camTarget = new THREE.Vector3();
@@ -626,8 +627,19 @@ function updateCamera(dt) {
   // Feed-forward is what makes this different from simply easing again: a
   // constant turn is followed with zero steady-state error, so the 32° of aim
   // lag does not come back, while a one-frame jolt is spread over ~0.1s.
-  const yawRate = (player.body.angvel().y ?? 0) + (player.turretVel ?? 0);
-  camYaw += yawRate * dt;
+  // Consume the rotation banked by the simulation, rather than integrating a
+  // rate across this render frame.
+  //
+  // Integrating here looked equivalent and was not. Physics runs on a fixed
+  // 1/60 accumulator while this runs once per rendered frame, so at any frame
+  // rate that is not exactly 60 some frames step the simulation and some do
+  // not. The camera then advanced smoothly every frame while the barrel
+  // advanced in bursts, the catch-up term chased the difference, and the two
+  // beat against each other — a visible shimmer on the gun whenever it turned,
+  // for no reason the player could see. Reported as "the barrel shakes when I
+  // rotate it". Banking the delta on the simulation clock makes the two exact.
+  camYaw += camYawFeed;
+  camYawFeed = 0;
 
   let d = targetYaw - camYaw;
   while (d > Math.PI) d -= Math.PI * 2;
@@ -743,11 +755,19 @@ function fadeOccluders(dt) {
 function simulate(dt, playerInput) {
   if (!player) return;
 
+  // Bank the rotation the barrel is about to be commanded through, on the
+  // SIMULATION clock. The camera consumes this instead of integrating a rate
+  // over the render frame — see the note in updateCamera.
+  const bankFeed = () => {
+    camYawFeed += ((player.body.angvel().y ?? 0) + (player.turretVel ?? 0)) * dt;
+  };
+
   if (ONLINE) {
     // Online, this client is not authoritative over anything. It predicts its
     // own tank forward and lets interpolation place everyone else; the server
     // owns the outcome and corrects us on every snapshot.
     net?.predict(playerInput);
+    bankFeed();
     combat.update(dt);
     world.step();
     return;
@@ -760,6 +780,7 @@ function simulate(dt, playerInput) {
       b.brain.think(dt, { world, RAPIER, tanks: allTanks(), combat }));
   }
   match.step(inputs);
+  bankFeed();
   match.events.length = 0;   // offline nobody consumes these
   simTime += dt;
 }

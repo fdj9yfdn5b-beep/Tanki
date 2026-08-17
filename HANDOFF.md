@@ -514,6 +514,18 @@ saying whether the trigger would do anything. Same bar, filled from cooldown
 when there is no charge clock, and it goes accent-coloured when the gun is ready
 so it reads peripherally.
 
+**A camera feed-forward must be integrated on the SIMULATION clock.** The first
+version added `rate * dt` once per rendered frame while physics ran on a fixed
+1/60 accumulator. At exactly 60fps those agree and nothing is wrong. At any
+other rate some frames step the simulation and some do not, so the camera
+advanced smoothly every frame while the barrel advanced in bursts, and the
+catch-up term chased the difference — the two beat against each other and the
+gun visibly shimmered while turning. Measured wobble: **0.00° at 60fps, 1.65° at
+144, 1.18° at 90, 1.46° at 37.** The reporter's machine runs 118-145fps; a test
+at 60 would have found nothing and declared it fixed. The commanded rotation is
+now banked inside `simulate()` and consumed once per frame, which is exact at
+every frame rate.
+
 **Locking the camera to the turret was right for aim and wrong for feel.** With
 yaw welded to the barrel, the camera also inherited every twitch of the HULL at
 full amplitude — kerb strikes, tank-on-tank shoves, driving wobble — all of
@@ -660,6 +672,10 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
 22. Camera yaw moved from locked to feed-forward + gentle catch-up (locked was
     too harsh when the hull moved); turret and hull rotation given acceleration
     limits so the settle scales with speed.
+23. Feed-forward moved onto the simulation clock (was shimmering the gun at any
+    frame rate other than 60); rotation ramps roughly halved after "too much
+    resistance", and the inertia scaling square-rooted so the heavy end is not
+    disproportionately sluggish.
 20. Playtest: the hover hull could neither hit nor be hit. Colliders grown to
     cover the turret, hover skirt added, ride height lowered; `hitheight.mjs`
     added. Uncovered a Rail imbalance that the bug had been masking.

@@ -53,20 +53,23 @@ const HOVER_DAMPING = 12;
 // 2.5m pair, so Rail winds up and settles noticeably heavier — and each weapon
 // gets a distinct feel out of a property it already had.
 //
-// Settle was 0.12s flat, which parked the aim exactly where you left it and
-// felt like the gun was on rails. Every increase here is coast the player did
-// not ask for, so it trades against the aim precision playtest 6 was about;
-// this is deliberately the smallest step that reads as mass.
-const TURRET_SPIN_UP = 0.75;
-const TURRET_SPIN_DOWN = 0.16;
+// These came DOWN after the first attempt at them (0.75 / 0.16 / 0.30 / 0.18)
+// was reported as "too much resistance". The acceleration-limited model is the
+// part that was wanted; the time constants were simply too long, and on the
+// heavier end the inertia scaling stacked on top — a Mammoth took half a second
+// to reach full turn rate, which reads as lag rather than as weight. Weight is
+// carried well enough by the difference BETWEEN hulls, not by the absolute
+// figures. If more or less is wanted, these four numbers are the dial.
+const TURRET_SPIN_UP = 0.42;
+const TURRET_SPIN_DOWN = 0.10;
 const TURRET_REFERENCE_BARREL = 3.0;   // Thunder's, i.e. the middle of the range
 
 // The same treatment for the hull's own rotation, scaled by mass instead of
 // barrel length. Deliberately quicker to stop than to start: a tracked vehicle
 // brakes a turn by driving the tracks against it, which it can do harder than
 // it can accelerate the turn in the first place.
-const HULL_TURN_SPIN_UP = 0.30;        // s from rest to full turn rate
-const HULL_TURN_SETTLE = 0.18;         // s from full turn rate back to straight
+const HULL_TURN_SPIN_UP = 0.13;        // s from rest to full turn rate
+const HULL_TURN_SETTLE = 0.08;         // s from full turn rate back to straight
 const HULL_REFERENCE_MASS = 1.55;      // Hunter
 
 function approach(current, target, maxDelta) {
@@ -574,7 +577,7 @@ export class Tank {
       // proportional to how fast it was actually turning: a dab of steer stops
       // almost immediately, a hard sustained turn swings a little past. Scaled
       // by hull mass, which is what makes a Mammoth feel like a Mammoth.
-      const inertia = this.hull.mass / HULL_REFERENCE_MASS;
+      const inertia = Math.sqrt(this.hull.mass / HULL_REFERENCE_MASS);
       const want = -steer * this.hull.turnRate;
       const ramp = this.hull.turnRate
         / ((want === 0 ? HULL_TURN_SETTLE : HULL_TURN_SPIN_UP) * inertia);
@@ -592,7 +595,10 @@ export class Tank {
       // A fixed acceleration limit, so both the wind-up and the settle scale
       // with how fast the turret is actually turning rather than taking a fixed
       // time. Heavier barrel, gentler acceleration — see the constants.
-      const inertia = this.weapon.barrelLength / TURRET_REFERENCE_BARREL;
+      // Square-rooted so a long barrel still feels heavier without the heaviest
+    // gun becoming sluggish: Rail lands 10% slower than the reference rather
+    // than 20%.
+    const inertia = Math.sqrt(this.weapon.barrelLength / TURRET_REFERENCE_BARREL);
       const ramp = maxRate / ((target === 0 ? TURRET_SPIN_DOWN : TURRET_SPIN_UP) * inertia);
       this.turretVel = approach(this.turretVel, target, ramp * dt);
       this.turret.rotation.y += this.turretVel * dt;
