@@ -564,7 +564,14 @@ const CAM_ELEV_RATE = 0.9;   // rad/s
 // jitter, network reconciliation — so it can be gentle without reintroducing
 // aim lag. Lower = calmer camera, slower recovery from a shunt.
 const CAM_YAW_CATCHUP = 9;
-let camYawFeed = 0;          // rotation banked by simulate(), consumed per frame
+// Running total of COMMANDED barrel rotation, plus the value it held at each of
+// the last two physics steps — mirroring the tank's own pose snapshots so the
+// camera can be interpolated by the same alpha.
+let camFeedTotal = 0;
+let camFeedA = 0;
+let camFeedB = 0;
+let camFeedSeen = 0;
+const _camPivotSrc = new THREE.Vector3();
 let camElevWanted = CAM_BASE_ELEV;
 
 const camTarget = new THREE.Vector3();
@@ -576,7 +583,12 @@ let camElev = CAM_BASE_ELEV;
 
 function updateCamera(dt) {
   if (!player) return;
-  const p = player.position;
+  // The RENDERED position, not the physics one. The rig has already been placed
+  // between physics frames; following the body instead would leave the camera
+  // chasing a target that jumps 60 times a second, which is the judder this is
+  // all meant to remove. The rig sits half a hull below the body centre.
+  const p = _camPivotSrc.copy(player.root.position);
+  p.y += player.hull.size[1] / 2;
 
   // Pitch input lives here rather than in the frame loop: it is presentation,
   // and it belongs on the same clock as the camera it drives.
@@ -638,8 +650,16 @@ function updateCamera(dt) {
   // beat against each other — a visible shimmer on the gun whenever it turned,
   // for no reason the player could see. Reported as "the barrel shakes when I
   // rotate it". Banking the delta on the simulation clock makes the two exact.
-  camYaw += camYawFeed;
-  camYawFeed = 0;
+  // Read the banked rotation at the SAME point between physics frames that the
+  // tank is being drawn at. Consuming the whole step's worth the instant the
+  // step ran — which is what the first version did — leaves the view ahead of a
+  // barrel that is still being drawn part-way through that step, and the two
+  // beat against each other again: 1.7° of shimmer at 144fps, measured, after
+  // the earlier fix had already taken it to zero on the un-interpolated build.
+  const a = Math.max(0, Math.min(1, accumulator / FIXED));
+  const visFeed = camFeedA + (camFeedB - camFeedA) * a;
+  camYaw += visFeed - camFeedSeen;
+  camFeedSeen = visFeed;
 
   let d = targetYaw - camYaw;
   while (d > Math.PI) d -= Math.PI * 2;
@@ -758,8 +778,13 @@ function simulate(dt, playerInput) {
   // Bank the rotation the barrel is about to be commanded through, on the
   // SIMULATION clock. The camera consumes this instead of integrating a rate
   // over the render frame — see the note in updateCamera.
+  // Bank the COMMANDED rotation as a running total, snapshotted the same way
+  // the poses are. The camera then reads it interpolated by the same alpha the
+  // tank is drawn with, so the view and the barrel advance in lockstep.
   const bankFeed = () => {
-    camYawFeed += ((player.body.angvel().y ?? 0) + (player.turretVel ?? 0)) * dt;
+    camFeedTotal += ((player.body.angvel().y ?? 0) + (player.turretVel ?? 0)) * dt;
+    camFeedA = camFeedB;
+    camFeedB = camFeedTotal;
   };
 
   if (ONLINE) {
@@ -833,7 +858,8 @@ function updateNameplates() {
 // and it scales with the square of the resolution, so resolution is the dial
 // worth turning automatically.
 const perfEl = document.getElementById('perf');
-let frameAvg = 16.7;
+let frameAvg = 16.7;       // ms of work per frame
+let intervalAvg = 16.7;    // ms between frames, i.e. the real frame rate
 let quality = 1;                 // multiplier on pixel ratio
 // Phones report devicePixelRatio 3 or more. Rendering a bloomed 3D scene at 3x
 // on a mobile GPU is hopeless, and the adaptive controller would only discover
@@ -871,14 +897,31 @@ function trackFrame(ms, dt) {
       applyQuality(); qualityCooldown = 2.5;
     }
   }
+  // Two different numbers, and conflating them was actively misleading.
+  //
+  // `fps` is now measured from the real interval between frames, which is what
+  // the display is actually showing — rAF is locked to vsync, so it can never
+  // exceed the monitor's refresh rate however fast the work is.
+  //
+  // `ms` is the WORK done per frame, and 1000/ms was previously being printed
+  // as "fps". At 1.5ms of work that reads as 660 fps on a 60Hz screen, which
+  // led to a reasonable "why is it running so high, it doesn't need to". It was
+  // never running that high; that figure is headroom, not frame rate.
+  intervalAvg += (dt * 1000 - intervalAvg) * 0.1;
   if (perfEl && perfEl.style.display !== 'none') {
     perfEl.textContent =
-      `${(1000 / frameAvg).toFixed(0)} fps   ${frameAvg.toFixed(1)} ms   ` +
+      `${(1000 / Math.max(0.001, intervalAvg)).toFixed(0)} fps   ` +
+      `${frameAvg.toFixed(1)} ms work   ` +
       `${(MAX_DPR * quality).toFixed(2)}x   fx ${fx.live.length}`;
   }
 }
 
 const clamp1 = (v) => Math.max(-1, Math.min(1, v));
+
+// Tanks this client steps itself, and therefore has to draw between steps.
+// Online that is only our own predicted tank — everyone else is placed by
+// snapshot interpolation, which already runs per rendered frame.
+const localSimTanks = () => (ONLINE ? (player ? [player] : []) : allTanks());
 
 // ── Touch driving model ─────────────────────────────────────────────────────
 /**
@@ -1021,6 +1064,11 @@ function frame(now) {
     if (t.fire || (t.autoFire && onTarget)) playerInput.fire = true;
   }
 
+  // Put every locally-simulated rig back on its true pose before stepping.
+  // The renderer leaves them part-way between two physics frames; the physics
+  // must never see that.
+  for (const t of localSimTanks()) t.restorePose();
+
   // Fixed-step physics; the same step the authoritative server will run.
   accumulator += dt;
   let steps = 0;
@@ -1042,6 +1090,13 @@ function present(dt) {
 
   // Remote tanks are placed by interpolation, not by local physics.
   net?.interpolate();
+
+  // Draw locally-stepped tanks between their last two physics poses. Without
+  // this the hull only moves 60 times a second no matter how fast the display
+  // refreshes, so it holds still for two or three refreshes and then jumps
+  // while the camera glides — which reads as the tank twitching.
+  const alpha = accumulator / FIXED;
+  for (const t of localSimTanks()) t.renderAt(alpha);
 
   updateNameplates();
   for (const t of allTanks()) t.faceCamera(camera);
@@ -1098,6 +1153,12 @@ addEventListener('resize', () => {
 window.TANKI = {
   bots, combat, world, WEAPONS, HULLS, scene, camera, renderer, composer,
   RAPIER, simulate, present, match, ONLINE, touch, targetOnTheLine, driveTowardStick,
+  // How far through the current physics step the renderer is. Exposed so a
+  // check can drive the loop at an arbitrary frame rate and see what the
+  // renderer would actually draw — without it, a test stepping physics by hand
+  // reads a stale alpha and reports the interpolation as broken.
+  setAccumulator(v) { accumulator = v; },
+  localSimTanks,
   // Live getters: `player` and `net` are null until the server welcomes us, and
   // a plain property would freeze that null in place.
   get player() { return player; },

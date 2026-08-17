@@ -514,6 +514,44 @@ saying whether the trigger would do anything. Same bar, filled from cooldown
 when there is no charge clock, and it goes accent-coloured when the gun is ready
 so it reads peripherally.
 
+**Fixed-step physics needs render interpolation, or it judders on any screen
+faster than 60Hz.** The hull's drawn position only changed 60 times a second, so
+on a 144Hz display the same pose was shown for two or three refreshes and then
+jumped, while the camera — smoothed per rendered frame — glided. The tank
+twitched against a smooth background. Reported as "it still jumps and dances"
+and "the movement looks artificial, it moves abruptly", and it is also why
+capping to 60 seemed like the answer: at exactly 60 every physics step lands on
+one refresh and the problem disappears. Interpolating between the last two
+physics poses fixes it properly and gets *better* the faster the display goes.
+Measured motion unevenness at 144fps: **238% -> 0%**.
+
+Three traps in it, all of which bit:
+
+- **The pose must be captured at the END of the step.** `syncTransform()` runs
+  at the top of `update()`, before the drive and the turret traverse, so
+  capturing there recorded the pre-traverse turret angle — and `restorePose()`
+  then wrote that back every frame and undid the rotation entirely. The gun
+  stopped turning while `turretVel` sat at full rate. Found by printing the
+  turret's world yaw and seeing it pinned at 0.0°.
+- **The rig must be restored before the next step.** `turret.rotation.y` is
+  simulation state, not a visual: traverse integrates onto it and
+  `aimDirection()` reads it. Leaving a half-interpolated angle there feeds a
+  wrong number back into the simulation every frame.
+- **The camera has to follow the interpolated rig, not the body**, and its
+  feed-forward has to be interpolated by the same alpha. Consuming a whole
+  step's banked rotation the instant the step ran put the view ahead of a barrel
+  still being drawn part-way through that step: 1.7° of shimmer at 144fps, on a
+  build where the previous fix had already measured zero.
+
+Final: 0.000° wobble on turret rotation at 60 and 144fps, 0.003° on hull
+rotation, 0% motion unevenness at 60/90/120/144.
+
+**The perf overlay was reporting headroom as frame rate.** It printed
+`1000 / work-ms` as "fps", so 1.5ms of work read as 660fps and prompted a
+reasonable "why is it running so high, it doesn't need to". rAF is vsync-locked
+and never exceeded the display. It now shows the measured frame interval as fps
+and labels the other number "ms work".
+
 **A camera feed-forward must be integrated on the SIMULATION clock.** The first
 version added `rate * dt` once per rendered frame while physics ran on a fixed
 1/60 accumulator. At exactly 60fps those agree and nothing is wrong. At any
@@ -672,6 +710,8 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
 22. Camera yaw moved from locked to feed-forward + gentle catch-up (locked was
     too harsh when the hull moved); turret and hull rotation given acceleration
     limits so the settle scales with speed.
+24. Render interpolation between physics steps (judder on >60Hz displays);
+    perf overlay now reports real frame rate rather than headroom.
 23. Feed-forward moved onto the simulation clock (was shimmering the gun at any
     frame rate other than 60); rotation ramps roughly halved after "too much
     resistance", and the inertia scaling square-rooted so the heavy end is not

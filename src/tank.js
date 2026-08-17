@@ -379,6 +379,78 @@ export class Tank {
     this.root.updateMatrixWorld(true);
   }
 
+  /**
+   * Record the pose for the renderer to interpolate from. MUST be called at the
+   * END of a physics step, never at the start.
+   *
+   * `syncTransform()` runs at the top of `update()`, before the drive and the
+   * turret traverse. Capturing there recorded the turret angle from BEFORE this
+   * step's rotation — and since `restorePose()` writes that value back at the
+   * start of the next frame, it undid the traverse every single frame and the
+   * gun stopped turning entirely while `turretVel` sat at full rate. Caught by
+   * printing the turret's world yaw and finding it pinned at 0.0°.
+   */
+  capturePose() {
+    if (!this._poseA) {
+      this._poseA = { p: this.root.position.clone(), q: this.root.quaternion.clone(), ty: this.turret.rotation.y };
+      this._poseB = { p: this.root.position.clone(), q: this.root.quaternion.clone(), ty: this.turret.rotation.y };
+      return;
+    }
+    this._poseA.p.copy(this._poseB.p);
+    this._poseA.q.copy(this._poseB.q);
+    this._poseA.ty = this._poseB.ty;
+    this._poseB.p.copy(this.root.position);
+    this._poseB.q.copy(this.root.quaternion);
+    this._poseB.ty = this.turret.rotation.y;
+  }
+
+  /**
+   * Draw the tank BETWEEN its last two physics poses.
+   *
+   * Physics runs on a fixed 60Hz step; the display does not. Without this the
+   * hull's on-screen position only changes 60 times a second, so on a 144Hz
+   * screen the same pose is shown for two or three refreshes and then jumps —
+   * while the camera, which is smoothed per rendered frame, glides. The tank
+   * therefore appears to twitch against a smooth background, which is the
+   * "it still jumps and dances" and "the movement looks artificial, it moves
+   * abruptly" of playtest 7. Capping the frame rate to 60 hides it by making
+   * every physics step land on exactly one refresh; interpolating fixes it and
+   * gets smoother the higher the refresh rate goes, which is the right way
+   * round.
+   *
+   * `alpha` is how far through the current physics step the renderer is —
+   * the leftover accumulator over the fixed step.
+   */
+  renderAt(alpha) {
+    if (!this._poseA) return;
+    const a = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    this.root.position.lerpVectors(this._poseA.p, this._poseB.p, a);
+    this.root.quaternion.slerpQuaternions(this._poseA.q, this._poseB.q, a);
+    // The turret rides on the hull, so it needs the same treatment or the gun
+    // steps while the chassis glides. Shortest arc, since it wraps.
+    let d = this._poseB.ty - this._poseA.ty;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    this.turret.rotation.y = this._poseA.ty + d * a;
+    this.root.updateMatrixWorld(true);
+  }
+
+  /**
+   * Put the rig back on the last true physics pose.
+   *
+   * MUST run before the next physics step. `turret.rotation.y` is not a visual
+   * — the traverse integrates onto it and `aimDirection()` reads it, so leaving
+   * a half-interpolated angle there would feed a slightly wrong number back
+   * into the simulation every frame and drift the aim away from the server's.
+   */
+  restorePose() {
+    if (!this._poseB) return;
+    this.root.position.copy(this._poseB.p);
+    this.root.quaternion.copy(this._poseB.q);
+    this.turret.rotation.y = this._poseB.ty;
+    this.root.updateMatrixWorld(true);
+  }
+
   /** Effective turret traverse: the weapon's rate, scaled by the hull. */
   get traverseRate() {
     return this.weapon.turretTurnRate * (this.hull.turretMod ?? 1);
@@ -654,6 +726,10 @@ export class Tank {
       }
     }
     this.syncChargeVisual();
+
+    // Last thing in the step, so the renderer interpolates from the finished
+    // state — hull moved, turret traversed, everything.
+    this.capturePose();
   }
 
   /**
