@@ -509,8 +509,6 @@ const CAM_DIST = 11.5;    // horizontal reach at full extension
 const CAM_RISE = 5.0;     // height above the pivot at full extension
 const CAM_LEN = Math.hypot(CAM_DIST, CAM_RISE);
 const CAM_BASE_ELEV = Math.atan2(CAM_RISE, CAM_DIST);
-const CAM_HARD_MIN = 1.4; // absolute floor — closer than this and we see nothing
-const CAM_PAD = 0.55;     // stand-off so a wall never touches the near plane
 // The camera looks at a point above the tank, not at the tank, so the view is
 // weighted toward what is ahead. On a phone held sideways the window is ~360px
 // tall and the bottom strip is HUD, and that offset pushed the player's own
@@ -531,7 +529,6 @@ const camPivot = new THREE.Vector3();
 let camYaw = 0;
 let camBoom = CAM_LEN;
 let camElev = CAM_BASE_ELEV;
-const camProbe = new RAPIER.Ball(0.5);   // spring-arm sweep volume
 
 function updateCamera(dt) {
   if (!player) return;
@@ -567,50 +564,23 @@ function updateCamera(dt) {
   const pivotGoal = p.clone().setY(p.y + CAM_PIVOT_Y);
   camPivot.lerp(pivotGoal, 1 - Math.exp(-9 * dt));
 
-  // Sphere-sweep each candidate boom and keep the one that buys the most
-  // distance, preferring the shallowest angle that achieves it. A plain ray is
-  // too thin for this: it threads between block edges and the camera still ends
-  // up buried in a wall the ray technically missed.
   const back = new THREE.Vector3(-Math.sin(camYaw), 0, -Math.cos(camYaw));
 
-  // Candidates start at whatever pitch the player asked for and climb from
-  // there. Collision may force the camera higher than requested — being able to
-  // see always outranks the preference — but never lower.
-  const candidates = [camElevWanted];
-  for (let e = camElevWanted + 0.22; e <= 1.45; e += 0.22) candidates.push(e);
-
-  let bestElev = candidates[0];
-  let bestReach = -1;
-  const probeDir = new THREE.Vector3();
-
-  for (const elev of candidates) {
-    probeDir.copy(back).multiplyScalar(Math.cos(elev)).setY(Math.sin(elev)).normalize();
-    const hit = world.castShape(
-      { x: camPivot.x, y: camPivot.y, z: camPivot.z },
-      { x: 0, y: 0, z: 0, w: 1 },
-      { x: probeDir.x, y: probeDir.y, z: probeDir.z },
-      camProbe, 0, CAM_LEN, true,
-      undefined, undefined, undefined, player.body);
-
-    const reach = hit
-      ? Math.max(CAM_HARD_MIN, (hit.time_of_impact ?? hit.timeOfImpact ?? hit.toi ?? CAM_LEN) - CAM_PAD)
-      : CAM_LEN;
-
-    // Only switch to a steeper angle if it is meaningfully better, otherwise the
-    // camera hunts between two near-equal candidates every frame.
-    if (reach > bestReach + 0.35) { bestReach = reach; bestElev = elev; }
-    if (reach >= CAM_LEN - 0.01) break;   // unobstructed; no need to climb
-  }
-
-  // Climb fast, settle back down slowly — same asymmetry as the boom. Easing
-  // into the correction is time spent with the camera still inside geometry.
-  camElev = bestElev > camElev
-    ? camElev + (bestElev - camElev) * (1 - Math.exp(-11 * dt))
-    : camElev + (bestElev - camElev) * (1 - Math.exp(-2.2 * dt));
-
-  camBoom = bestReach < camBoom
-    ? bestReach
-    : camBoom + (bestReach - camBoom) * (1 - Math.exp(-2.2 * dt));
+  // The camera does NOT climb over cover, and does not pull in against it.
+  //
+  // It used to do both: sphere-sweep a fan of steeper angles and take whichever
+  // bought the most distance. It kept the camera out of walls, and it cost the
+  // player the fight. Backing against cover — which is where you spend a duel —
+  // swung the view up into a top-down shot, and from up there the tank shooting
+  // at you is off the bottom of the screen. Playtest, two humans: "it hides the
+  // attacker."
+  //
+  // Framing now stays exactly where the player put it, and the wall in the way
+  // is faded out instead (see fadeOccluders). Moving the camera to solve an
+  // occlusion problem moves the picture; making the occluder transparent solves
+  // it and leaves the picture alone.
+  camElev += (camElevWanted - camElev) * (1 - Math.exp(-6 * dt));
+  camBoom += (CAM_LEN - camBoom) * (1 - Math.exp(-6 * dt));
 
   const dir = back.clone().multiplyScalar(Math.cos(camElev)).setY(Math.sin(camElev)).normalize();
   camPos.copy(camPivot).addScaledVector(dir, camBoom);
@@ -619,6 +589,75 @@ function updateCamera(dt) {
   camTarget.lerp(camPivot, 1 - Math.exp(-14 * dt));
   camera.position.copy(camPos);
   camera.lookAt(camTarget);
+
+  fadeOccluders(dt);
+}
+
+// ── See-through cover ───────────────────────────────────────────────────────
+// Fade any arena block sitting between the camera and the player.
+//
+// Two details decide whether this works at all:
+//
+// The blocks SHARE one material. Setting opacity on the mesh's material would
+// dissolve the entire arena at once, so each block that has ever been faded
+// gets its own clone, made lazily and cached on the mesh. Typically one or two
+// blocks are involved at a time, so this stays small.
+//
+// The ray is cast from the PLAYER outwards, not from the camera. Three's
+// raycaster obeys `material.side`, and these boxes are FrontSide — so a camera
+// that has ended up inside a wall sees only back faces and detects nothing,
+// which is exactly the case that matters most. From the player's side the wall
+// presents its front face and is found normally.
+const GHOST_OPACITY = 0.16;
+const GHOST_FADE = 7;             // per second
+const occRay = new THREE.Raycaster();
+const fading = new Map();         // mesh -> current opacity
+
+function ghostMaterialFor(mesh) {
+  if (!mesh.userData.ghostMat) {
+    const ghost = mesh.material.clone();
+    ghost.transparent = true;
+    ghost.depthWrite = false;     // so it never occludes what it is revealing
+    // Emissive surfaces do not dim with opacity — they keep adding light. The
+    // centre structure's trim band is emissive teal, and ghosting it purely by
+    // alpha left a glowing wash across the bottom of the screen that was harder
+    // to see past than the solid wall had been. A ghost does not glow.
+    if (ghost.emissive) ghost.emissiveIntensity = 0;
+    mesh.userData.solidMat = mesh.material;
+    mesh.userData.ghostMat = ghost;
+  }
+  return mesh.userData.ghostMat;
+}
+
+function fadeOccluders(dt) {
+  const blocks = match.arena?.statics;
+  if (!blocks?.length) return;
+
+  const toCam = new THREE.Vector3().subVectors(camera.position, camPivot);
+  const dist = toCam.length();
+  occRay.set(camPivot, toCam.normalize());
+  occRay.far = dist;
+
+  const blocking = new Set();
+  for (const h of occRay.intersectObjects(blocks, false)) blocking.add(h.object);
+
+  // Anything blocking fades toward transparent; everything previously faded
+  // fades back and is handed its shared material once it is solid again.
+  for (const mesh of blocking) if (!fading.has(mesh)) fading.set(mesh, 1);
+
+  for (const [mesh, current] of fading) {
+    const target = blocking.has(mesh) ? GHOST_OPACITY : 1;
+    const next = current + (target - current) * (1 - Math.exp(-GHOST_FADE * dt));
+    if (target === 1 && next > 0.985) {
+      mesh.material = mesh.userData.solidMat;
+      fading.delete(mesh);
+      continue;
+    }
+    const ghost = ghostMaterialFor(mesh);
+    ghost.opacity = next;
+    mesh.material = ghost;
+    fading.set(mesh, next);
+  }
 }
 
 // ── Simulation ──────────────────────────────────────────────────────────────

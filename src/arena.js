@@ -53,6 +53,12 @@ export function buildArena(scene, world, RAPIER) {
         const t = new THREE.Mesh(new THREE.BoxGeometry(w + 0.3, 0.22, d + 0.3), trimMat);
         t.position.set(x, h - 0.5, z);
         scene.add(t);
+        // Listed alongside the blocks so the camera's occlusion fade can reach
+        // it. Left out, it was the one piece of the arena that could not go
+        // transparent — and being emissive and proud of the face, a camera up
+        // against the centre structure got a wall of glowing teal across half
+        // the screen while the block behind it politely faded away.
+        statics.push(t);
       }
     }
 

@@ -32,7 +32,9 @@ export class Match {
 
     seed(worldSeed);
     this.world = new RAPIER.World({ x: 0, y: -30, z: 0 });
-    buildArena(scene, this.world, RAPIER);
+    // Kept: the renderer needs the block meshes to fade whatever is between the
+    // camera and the player. Headless, `scene` is null and this is empty.
+    this.arena = buildArena(scene, this.world, RAPIER);
 
     this.combat = new Combat({ world: this.world, RAPIER, scene, fx: null });
     this.combat.onKill = (victim, killer) => {
