@@ -142,10 +142,17 @@ was edited.
 1. **Game modes** — teams, match end, win condition. Turns a sandbox into a
    game. This is the next real one: two players with different tanks now works,
    and what is missing is something to *win*.
-2. **Permanent hosting.** The cloudflared tunnel only lives while the user's Mac
-   is awake and the process is up, and the URL changes if it drops. `Dockerfile`
-   and `fly.toml` are ready and need only a fly.io account. Until then a friend
-   can only play when the user is at the machine.
+2. **Permanent hosting — in progress on Render.** `render.yaml` is written and
+   the repo has a git history; what remains is pushing to GitHub and connecting
+   it. Fly was priced up and rejected for now: ~$5/month, which is a plan
+   minimum rather than usage (measured egress is only ~73MB per player-hour, so
+   even 100 hours of play is 15 cents). Render's free tier needs no card, and
+   the trade is that an idle instance is SUSPENDED after ~15 minutes and takes
+   about a minute to wake. `net.connect()` therefore retries for two minutes
+   with a "waking the server" counter instead of failing on the first attempt —
+   verified by starting a server 57s into a retry and watching the client join
+   on its own. Note a suspend also RESETS THE MATCH, since the arena lives in
+   process memory.
 3. **More maps** — engagement bands were derived from *one* arena's sight lines
    and will not transfer.
 4. **Art pass** — deliberately last; see §5.
