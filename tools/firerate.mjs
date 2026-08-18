@@ -56,7 +56,12 @@ const DRIVE = process.env.DRIVE !== '0';
 function inputAt(tick) {
   return {
     throttle: DRIVE ? 1 : 0,
-    steer: DRIVE ? Math.sin(tick / 90) : 0,
+    // STEER=square reproduces what a player does — hold the key, let go — which
+    // is a discontinuity the smooth sine never produces. "Turn right and stop"
+    // is the reported case, and a continuous input cannot exercise it.
+    steer: DRIVE ? (process.env.STEER === 'square'
+      ? (Math.floor(tick / 45) % 2 ? 0 : 1)
+      : Math.sin(tick / 90)) : 0,
     turretSteer: 0,
     aimPoint: null,
     fire: true,
@@ -69,6 +74,8 @@ let lastAck = 0;
 const drawnAt = [];     // tick of each client-drawn shot, for the spacing report
 
 const corrections = [];
+const yawErrors = [];
+const yawOf = (m) => { const r = m.tanks.get(ID).body.rotation(); return 2 * Math.atan2(r.y, r.w); };
 
 for (let t = 0; t < TICKS; t++) {
   // ── client ────────────────────────────────────────────────────────────────
@@ -100,10 +107,21 @@ for (let t = 0; t < TICKS; t++) {
   // ── snapshots arriving back ───────────────────────────────────────────────
   while (toClient.length && toClient[0].arrives <= t) {
     const { snap } = toClient.shift();
+    // Rotational snap, measured the same way `lastCorrection` measures the
+    // positional one: how far reconciliation MOVES the hull, not how far the
+    // client is from the server. The client legitimately predicts ahead by its
+    // latency, so a standing difference is expected and means nothing — the
+    // first version of this measured that and reported a healthy build as 9°
+    // out. What a player feels is the correction itself.
+    const yawBefore = yawOf(client);
     net._reconcile(snap);
     // How far the hull jumped when the server's answer arrived. This is what a
     // player feels as the tank not driving smoothly.
     corrections.push(net.lastCorrection);
+    let dy = yawOf(client) - yawBefore;
+    while (dy > Math.PI) dy -= 2 * Math.PI;
+    while (dy < -Math.PI) dy += 2 * Math.PI;
+    yawErrors.push(Math.abs(dy) * 180 / Math.PI);
   }
 }
 
@@ -122,6 +140,10 @@ const at = (p) => c[Math.min(c.length - 1, Math.floor(c.length * p))] ?? 0;
 console.log(`\n  reconciliation snap, ${DRIVE ? 'while driving and turning' : 'stationary'}:`);
 console.log(`    median ${at(0.5).toFixed(3)}m   p95 ${at(0.95).toFixed(3)}m   worst ${at(1).toFixed(3)}m`);
 console.log(`    over 0.25m: ${c.filter((v) => v > 0.25).length}/${c.length} snapshots`);
+const y = yawErrors.slice().sort((a, b) => a - b);
+const yAt = (p) => y[Math.min(y.length - 1, Math.floor(y.length * p))] ?? 0;
+console.log(`  rotational snap applied by reconciliation:`);
+console.log(`    median ${yAt(0.5).toFixed(2)}deg   p95 ${yAt(0.95).toFixed(2)}deg   worst ${yAt(1).toFixed(2)}deg`);
 
 // A client may legitimately be one shot ahead or behind the server at any
 // instant — it is predicting — so this is a tolerance, not an equality.

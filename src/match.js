@@ -266,6 +266,13 @@ export class Match {
         qy: round(r.y, 4), qw: round(r.w, 4),
         ty: round(tank.turret.rotation.y, 3),
         tv: round(tank.turretVel, 3),
+        // The HULL's angular rate, not the turret's. Both are now ramped rather
+        // than set from the input, which makes them predicted state that has to
+        // be reconciled — leaving this one off the wire meant the client ramped
+        // down from a different value than the server, their hull rotations
+        // parted company, and every time you stopped turning the correction
+        // snapped the tank back the other way.
+        nv: round(tank.turnVel, 3),
         hp: Math.round(tank.hp),
         a: tank.alive ? 1 : 0,
         c: round(tank.charge, 2),
@@ -307,6 +314,7 @@ function applyTankState(tank, s) {
   tank.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   tank.turret.rotation.y = s.ty;
   tank.turretVel = s.tv;
+  tank.turnVel = s.nv ?? 0;
   tank.hp = s.hp;
   tank.alive = !!s.a;
   tank.charge = s.c;

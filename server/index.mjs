@@ -471,7 +471,14 @@ function sendSnapshots() {
   const snap = match.snapshot();
   const events = match.events.splice(0, match.events.length);
   for (const client of clients.values()) {
-    send(client, { t: S_SNAPSHOT, tick: snap.tick, ack: client.lastAck, tanks: snap.tanks, events });
+    // `drops` matters as much as `tanks`. Building it in the snapshot and then
+    // not forwarding it is why no crate ever appeared on a client: the server
+    // was spawning and dropping them correctly the whole time, into a field
+    // nobody was sending.
+    send(client, {
+      t: S_SNAPSHOT, tick: snap.tick, ack: client.lastAck,
+      tanks: snap.tanks, drops: snap.drops, events,
+    });
   }
 }
 
