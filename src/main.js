@@ -9,7 +9,7 @@ import { Fx } from './fx.js';
 import { Match } from './match.js';
 import { NetClient } from './net/client.js';
 import { BotBrain } from './bots.js';
-import { WEAPONS, HULLS } from './config.js';
+import { WEAPONS, HULLS, DROP_KINDS } from './config.js';
 import { chooseLoadout } from './loadout.js';
 import { createTouchControls, isTouchDevice } from './touch.js';
 
@@ -303,6 +303,14 @@ function startOnline(lo, status) {
         // What it DOES draw is the number, which is the part that was missing:
         // how much the shot was worth.
         if (e.by === net.id && who !== player) showDamage(who, e.dmg);
+      } else if (e.e === 'pickup') {
+        const spec = DROP_KINDS[e.kind];
+        const taker = match.tanks.get(e.by);
+        if (taker) fx.explosion(taker.position, 4, spec?.color ?? 0xffffff);
+        feed(`${e.by === net.id ? 'You' : taker?.name ?? '?'}  picked up  ${spec?.name ?? e.kind}`,
+          '#' + (spec?.color ?? 0xffffff).toString(16).padStart(6, '0'));
+      } else if (e.e === 'drop') {
+        feed(`${DROP_KINDS[e.kind]?.name ?? e.kind} incoming`, '#9aa4b2');
       } else if (e.e === 'kill' && who) {
         fx.explosion(who.position, 7, 0xff8a3d);
         const killer = e.by != null ? match.tanks.get(e.by) : null;
@@ -449,7 +457,30 @@ const hud = {
   hint: document.getElementById('charge-hint'),
   scoreboard: document.getElementById('scoreboard'),
   damage: document.getElementById('damage'),
+  buffs: document.getElementById('buffs'),
 };
+
+// Which abilities are running, and for how long. Rebuilt only when the set of
+// names changes; the countdown itself is written straight to the existing
+// nodes, so this is not churning DOM sixty times a second.
+let buffSig = '';
+function updateBuffs() {
+  if (!hud.buffs || !player) return;
+  const names = [...player.effects.keys()];
+  const sig = names.join(',');
+  if (sig !== buffSig) {
+    buffSig = sig;
+    hud.buffs.innerHTML = names.map((k) => {
+      const spec = DROP_KINDS[k];
+      const col = '#' + (spec?.color ?? 0xffffff).toString(16).padStart(6, '0');
+      return `<span class="buff" data-k="${k}" style="color:${col}">${spec?.name ?? k} <b></b></span>`;
+    }).join('');
+  }
+  for (const el of hud.buffs.children) {
+    const left = player.effects.get(el.dataset.k);
+    if (left !== undefined) el.querySelector('b').textContent = left.toFixed(1) + 's';
+  }
+}
 
 /**
  * Float the damage figure over the tank that took it.
@@ -953,6 +984,60 @@ function trackFrame(ms, dt) {
 
 const clamp1 = (v) => Math.max(-1, Math.min(1, v));
 
+// ── Air-drop crates ─────────────────────────────────────────────────────────
+// One mesh per live crate, rebuilt from match.drops each frame. The list is
+// short (three at most) and server-owned, so reconciling meshes against it is
+// simpler and less error-prone than tracking spawn/expire events on the client.
+const dropMeshes = new Map();     // drop id -> Group
+
+function makeCrate(kind) {
+  const spec = DROP_KINDS[kind] ?? DROP_KINDS.shield;
+  const g = new THREE.Group();
+  const geo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
+
+  g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: spec.color, emissive: spec.color, emissiveIntensity: 0.9,
+    roughness: 0.35, metalness: 0.5, transparent: true, opacity: 0.85,
+  })));
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({ color: 0xffffff })));
+
+  // A column of light down to the ground. A crate is only worth crossing the
+  // map for if it can be seen from across the map, and a 1.7m box cannot.
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 1.6, 40, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: spec.color, transparent: true, opacity: 0.1,
+      depthWrite: false, side: THREE.DoubleSide,
+    }));
+  beam.position.y = -20;
+  g.add(beam);
+  g.userData.beam = beam;
+  scene.add(g);
+  return g;
+}
+
+function syncDrops(dt) {
+  const live = new Set();
+  for (const d of match.drops ?? []) {
+    live.add(d.id);
+    let g = dropMeshes.get(d.id);
+    if (!g) { g = makeCrate(d.kind); dropMeshes.set(d.id, g); }
+    g.position.set(d.x, d.y, d.z);
+    g.rotation.y += dt * 1.2;
+    // Bob once it has landed, so a crate on the ground still draws the eye.
+    const landed = d.y <= 1.5;
+    g.position.y += landed ? Math.sin(performance.now() / 400) * 0.12 : 0;
+    g.userData.beam.visible = !landed;
+  }
+  for (const [id, g] of dropMeshes) {
+    if (live.has(id)) continue;
+    scene.remove(g);
+    g.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+    dropMeshes.delete(id);
+  }
+}
+
 // Tanks this client steps itself, and therefore has to draw between steps.
 // Online that is only our own predicted tank — everyone else is placed by
 // snapshot interpolation, which already runs per rendered frame.
@@ -1133,6 +1218,7 @@ function present(dt) {
   const alpha = accumulator / FIXED;
   for (const t of localSimTanks()) t.renderAt(alpha);
 
+  syncDrops(dt);
   updateNameplates();
   for (const t of allTanks()) t.faceCamera(camera);
 
@@ -1144,6 +1230,7 @@ function present(dt) {
   // sync — not just the keyboard shortcut.
   if (hud.weapon.textContent !== player.weapon.name) updateWeaponHud();
 
+  updateBuffs();
   updateScoreboard();
 
   const frac = player.hp / player.maxHp;

@@ -276,6 +276,10 @@ export class Combat {
   }
 
   _applyDamage(target, amount, source, point) {
+    // POWER scales what the shooter deals; SHIELD scales what the target takes
+    // (inside takeDamage). Both are multipliers on the tuned numbers rather
+    // than flat additions, so the weapon's shape at range survives.
+    if (source?.effectMul) amount *= source.effectMul('damageDealt');
     const killed = target.takeDamage(amount, source);
     this.onHit?.(target, amount, source, point);
     if (killed) {

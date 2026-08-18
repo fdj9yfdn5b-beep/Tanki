@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HULLS, WEAPONS, TURN_BY_SPEED } from './config.js';
+import { HULLS, WEAPONS, TURN_BY_SPEED, DROP_KINDS } from './config.js';
 import { metalTexture, treadTexture } from './textures.js';
 
 // One tank. Player and bot go through the same `update(dt, input)` path —
@@ -104,6 +104,7 @@ export class Tank {
     this.turretVel = 0;
     this.turnVel = 0;
     this.spawnGuard = 0;     // seconds of post-respawn invulnerability left
+    this.effects = new Map();  // drop kind -> seconds remaining
 
     this._buildBody();
     this._buildRig();
@@ -496,11 +497,37 @@ export class Tank {
       frac > 0.5 ? 0x4ade80 : frac > 0.25 ? 0xfbbf24 : 0xef4444);
   }
 
+  /** Grant a timed ability from an air drop. Re-taking one refreshes it. */
+  giveEffect(kind) {
+    const spec = DROP_KINDS[kind];
+    if (!spec) return;
+    this.effects.set(kind, spec.duration);
+  }
+
+  /** Multiplier for a named stat across every active effect. */
+  effectMul(stat) {
+    let m = 1;
+    for (const kind of this.effects.keys()) {
+      const v = DROP_KINDS[kind]?.[stat];
+      if (v !== undefined) m *= v;
+    }
+    return m;
+  }
+
+  /** Compact form for the snapshot: [kind, secondsLeft, ...]. */
+  effectsWire() {
+    if (this.effects.size === 0) return undefined;
+    const out = [];
+    for (const [k, t] of this.effects) out.push(k, +t.toFixed(1));
+    return out;
+  }
+
   takeDamage(amount, from) {
     if (!this.alive) return false;
     // Just respawned: shrug it off entirely. Reducing the damage instead would
     // still let a camped spawn whittle someone down before they can move.
     if (this.spawnGuard > 0) return false;
+    amount *= this.effectMul('damageTaken');
     this.hp = Math.max(0, this.hp - amount);
 
     // Remember who is shooting us. Without this a bot happily keeps grinding on
@@ -563,12 +590,14 @@ export class Tank {
     this.turretVel = 0;
     this.turnVel = 0;
     this.spawnGuard = 0;     // seconds of post-respawn invulnerability left
+    this.effects = new Map();  // drop kind -> seconds remaining
     this.cooldown = 0;
     this.charge = 0;
     this.recoilOffset = 0;
     this.aimError = 0;
     this.threatFrom = null;
     this.threatTimer = 0;
+    this.effects.clear();      // abilities do not survive death
 
     this.collider.setEnabled(true);      // solid again — see takeDamage
     this.root.visible = true;
@@ -583,6 +612,10 @@ export class Tank {
   // ── Per-frame ─────────────────────────────────────────────────────────────
   // input: { throttle:-1..1, steer:-1..1, aimPoint:Vector3|null, fire:boolean }
   update(dt, input, fx) {
+    for (const [k, t] of this.effects) {
+      const left = t - dt;
+      if (left <= 0) this.effects.delete(k); else this.effects.set(k, left);
+    }
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.recoilOffset *= Math.max(0, 1 - dt * 9);
     this.threatTimer = Math.max(0, (this.threatTimer ?? 0) - dt);
@@ -608,7 +641,8 @@ export class Tank {
     const strafe = THREE.MathUtils.clamp(input.strafe ?? 0, -1, 1);
 
     const vel = this.body.linvel();
-    const target = forward.clone().multiplyScalar(throttle * this.hull.maxSpeed);
+    const maxSpeed = this.hull.maxSpeed * this.effectMul('maxSpeed');
+    const target = forward.clone().multiplyScalar(throttle * maxSpeed);
 
     // A hover hull adds a sideways component, so its velocity is a full 2D
     // vector rather than a scalar along the nose. This is the whole difference
@@ -617,17 +651,17 @@ export class Tank {
       // Right-hand perpendicular: with the hull facing +Z this is -X, which is
       // screen-right, matching every other "right" in the codebase.
       const right = new THREE.Vector3(-forward.z, 0, forward.x);
-      target.addScaledVector(right, strafe * this.hull.maxSpeed * this.hull.strafeFactor);
+      target.addScaledVector(right, strafe * maxSpeed * this.hull.strafeFactor);
       // Diagonals must not be faster than either axis alone.
       const flat = Math.hypot(target.x, target.z);
-      if (flat > this.hull.maxSpeed) target.multiplyScalar(this.hull.maxSpeed / flat);
+      if (flat > maxSpeed) target.multiplyScalar(maxSpeed / flat);
     }
     // Blend toward the target velocity rather than setting it: keeps collisions
     // and explosion knockback meaningful instead of being erased every frame.
     const accel = this.hull.driveForce * dt;
     const newVel = new THREE.Vector3(vel.x, vel.y, vel.z);
-    newVel.x += (target.x - newVel.x) * Math.min(1, accel / this.hull.maxSpeed);
-    newVel.z += (target.z - newVel.z) * Math.min(1, accel / this.hull.maxSpeed);
+    newVel.x += (target.x - newVel.x) * Math.min(1, accel / maxSpeed);
+    newVel.z += (target.z - newVel.z) * Math.min(1, accel / maxSpeed);
     // ── Anti-grav ───────────────────────────────────────────────────────────
     // A spring-damper onto a fixed gap above whatever is below, NOT a fixed
     // height and not gravity switched off. Over a ledge the ray finds nothing
@@ -703,8 +737,8 @@ export class Tank {
       // by hull mass, which is what makes a Mammoth feel like a Mammoth.
       const inertia = Math.sqrt(this.hull.mass / HULL_REFERENCE_MASS);
       // Turn rate falls off with speed — see TURN_BY_SPEED.
-      const speedFrac = Math.min(1, Math.hypot(newVel.x, newVel.z) / this.hull.maxSpeed);
-      const turnRate = this.hull.turnRate
+      const speedFrac = Math.min(1, Math.hypot(newVel.x, newVel.z) / maxSpeed);
+      const turnRate = this.hull.turnRate * this.effectMul('turnRate')
         * (TURN_BY_SPEED.atRest + (TURN_BY_SPEED.atTopSpeed - TURN_BY_SPEED.atRest) * speedFrac);
       const want = -steer * turnRate;
       const ramp = turnRate

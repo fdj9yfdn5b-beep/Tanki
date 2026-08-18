@@ -335,3 +335,49 @@ export function damageAtRange(weapon, dist) {
   const t = (dist - weapon.falloffStart) / (weapon.falloffEnd - weapon.falloffStart);
   return weapon.damage * (1 - t * (1 - weapon.minDamageFactor));
 }
+
+// ── Air drops ───────────────────────────────────────────────────────────────
+// Crates fall onto the arena and grant a timed ability to whoever drives into
+// one first. They exist to give the map a reason to leave cover: the arena is
+// symmetric and a duel between two players who both know their weapon's band
+// has no other pull toward a particular piece of ground.
+//
+// Every effect is a MULTIPLIER, never a flat grant. A shield that made you
+// invulnerable, or a damage boost that added a fixed number, would each rewrite
+// the balance the optimiser produced; a multiplier scales it and stays legible
+// to a player who already knows what their tank does.
+//
+// Durations are deliberately short. The interesting decision is whether to
+// break off and take the crate, not what happens for the next half-minute.
+export const DROPS = {
+  interval: 18,        // s between drops
+  maxAlive: 3,         // crates on the field at once
+  fallFrom: 42,        // m up — high enough to see across the map
+  fallSpeed: 11,       // m/s
+  pickupRadius: 3.2,   // m, generous: a fast hull should not have to thread it
+  lifetime: 32,        // s on the ground before it expires
+};
+
+export const DROP_KINDS = {
+  shield: {
+    name: 'SHIELD',
+    duration: 10,
+    color: 0x6fd3ff,
+    // Takes 45% off incoming damage. Not immunity — a protected tank still has
+    // to fight, and whoever it is fighting can still see progress.
+    damageTaken: 0.55,
+  },
+  power: {
+    name: 'POWER',
+    duration: 10,
+    color: 0xff8a3d,
+    damageDealt: 1.5,
+  },
+  speed: {
+    name: 'SPEED',
+    duration: 12,
+    color: 0x8fe388,
+    maxSpeed: 1.35,
+    turnRate: 1.25,
+  },
+};

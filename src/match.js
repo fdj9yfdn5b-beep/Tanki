@@ -3,7 +3,8 @@ import { buildArena, spawnPoints } from './arena.js';
 import { Tank } from './tank.js';
 import { Combat } from './weapons.js';
 import { seed } from './rng.js';
-import { SCORE, SPAWN_PROTECTION } from './config.js';
+import { SCORE, SPAWN_PROTECTION, DROPS, DROP_KINDS } from './config.js';
+import { random, pick } from './rng.js';
 
 // The authoritative match simulation, shared verbatim by server and client.
 //
@@ -29,6 +30,9 @@ export class Match {
     this.tanks = new Map();          // id -> Tank
     this.spawns = spawnPoints();
     this.events = [];                // drained by the server each tick
+    this.drops = [];                 // air-dropped crates, see _stepDrops
+    this.dropTimer = DROPS.interval * 0.5;
+    this.nextDropId = 1;
 
     seed(worldSeed);
     this.world = new RAPIER.World({ x: 0, y: -30, z: 0 });
@@ -167,6 +171,7 @@ export class Match {
     }
 
     this.combat.update(TICK_DT);
+    this._stepDrops(TICK_DT);
     this.world.step();
     this.tick++;
 
@@ -185,9 +190,70 @@ export class Match {
     }
   }
 
+  /**
+   * Air-dropped crates: spawn, fall, expire, and get picked up.
+   *
+   * Lives in Match rather than in the server so the client runs the exact same
+   * code — a crate is simulated state like anything else, and a client that
+   * guessed at it would show pickups that never happened. The RNG is the
+   * SEEDED one, so both ends choose the same drop points and kinds from the
+   * same tick, and only the pickup itself needs the server's word.
+   */
+  _stepDrops(dt) {
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i];
+
+      if (d.y > d.groundY) {
+        d.y = Math.max(d.groundY, d.y - DROPS.fallSpeed * dt);
+      } else {
+        d.age += dt;
+        if (d.age > DROPS.lifetime) {
+          this.drops.splice(i, 1);
+          this.events.push({ e: 'dropgone', id: d.id });
+          continue;
+        }
+      }
+
+      // Only landed crates can be taken, so a tank cannot claim one out of the
+      // air before anyone has had a chance to drive to it.
+      if (d.y > d.groundY + 0.4) continue;
+      for (const tank of this.tanks.values()) {
+        if (!tank.alive) continue;
+        const p = tank.body.translation();
+        if (Math.hypot(p.x - d.x, p.z - d.z) > DROPS.pickupRadius) continue;
+        tank.giveEffect(d.kind);
+        this.drops.splice(i, 1);
+        this.events.push({ e: 'pickup', id: d.id, by: tank.netId, kind: d.kind });
+        break;
+      }
+    }
+
+    this.dropTimer -= dt;
+    if (this.dropTimer > 0 || this.drops.length >= DROPS.maxAlive) return;
+    this.dropTimer = DROPS.interval;
+
+    // Drop onto open ground. Spawn points are known clear, and offsetting
+    // toward the middle keeps crates out of the corners where a camper already
+    // has the advantage.
+    const base = this.spawns[Math.floor(random() * this.spawns.length)];
+    const pull = 0.35 + random() * 0.4;
+    const x = base.x * (1 - pull);
+    const z = base.z * (1 - pull);
+    const kind = pick(Object.keys(DROP_KINDS));
+    const d = {
+      id: this.nextDropId++, kind, x, z,
+      y: DROPS.fallFrom, groundY: 1.2, age: 0,
+    };
+    this.drops.push(d);
+    this.events.push({ e: 'drop', id: d.id, kind, x: round(x), z: round(z) });
+  }
+
   // ── State transfer ────────────────────────────────────────────────────────
   /** Everything a client needs to reproduce this tank's visible state. */
   snapshot() {
+    const drops = this.drops.map((d) => ({
+      id: d.id, k: d.kind, x: round(d.x), y: round(d.y), z: round(d.z),
+    }));
     const tanks = [];
     for (const tank of this.tanks.values()) {
       const t = tank.body.translation();
@@ -205,13 +271,14 @@ export class Match {
         c: round(tank.charge, 2),
         cd: round(tank.cooldown, 2),
         sg: round(tank.spawnGuard, 2),
+        fx: tank.effectsWire(),
         k: tank.kills ?? 0,
         as: tank.assists ?? 0,
         de: tank.deaths ?? 0,
         sc: tank.score ?? 0,
       });
     }
-    return { tick: this.tick, tanks };
+    return { tick: this.tick, tanks, drops };
   }
 
   /** Overwrite local state with the server's. Used by reconciliation. */

@@ -147,6 +147,14 @@ export class NetClient {
       tank.kills = s.k; tank.assists = s.as; tank.deaths = s.de; tank.score = s.sc;
     }
 
+    // Crates are server-owned state. Take the newest list wholesale rather than
+    // interpolating: they fall on a fixed path and then sit still, so there is
+    // nothing a blend would improve, and a crate that is gone must disappear
+    // immediately rather than fading toward a position it no longer has.
+    if (snap.drops) this.match.drops = snap.drops.map((d) => ({
+      id: d.id, kind: d.k, x: d.x, y: d.y, z: d.z,
+    }));
+
     for (const e of snap.events ?? []) this.onEvent?.(e);
     this._reconcile(snap);
   }
@@ -298,6 +306,9 @@ export class NetClient {
       // newer snapshot rather than blended.
       tank.charge = sb.c ?? 0;
       tank.spawnGuard = sb.sg ?? 0;
+      // Effects arrive as a flat [kind, secondsLeft, ...] pair list.
+      tank.effects.clear();
+      for (let i = 0; sb.fx && i < sb.fx.length; i += 2) tank.effects.set(sb.fx[i], sb.fx[i + 1]);
       tank._syncHealthBar?.();
       tank.syncChargeVisual?.();
       // Push the interpolated body transform onto the visual rig. Interpolation
