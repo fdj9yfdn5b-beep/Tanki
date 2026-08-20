@@ -320,6 +320,15 @@ function applyTankState(tank, s) {
   tank.charge = s.c;
   tank.cooldown = s.cd;
   tank.spawnGuard = s.sg ?? 0;
+  // Air-drop abilities, for the LOCAL player.
+  //
+  // interpolate() carries these for everyone else but deliberately skips our
+  // own tank ("ours is predicted, not interpolated"), and the client never runs
+  // _stepDrops — only the server spawns and awards crates. So without this line
+  // the one player who most needs to know what they picked up is the only one
+  // who is never told, and the HUD sat empty however many crates you drove over.
+  tank.effects.clear();
+  for (let i = 0; s.fx && i < s.fx.length; i += 2) tank.effects.set(s.fx[i], s.fx[i + 1]);
   if (s.k !== undefined) {
     tank.kills = s.k; tank.assists = s.as; tank.deaths = s.de; tank.score = s.sc;
   }

@@ -539,6 +539,8 @@ body.touch #help { display: none; }
   font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
   overflow: hidden;
 }
+/* The same symbol that was on the crate. Learning it once should be enough. */
+.buff-icon { width: 15px; height: 15px; align-self: center; flex: none; }
 .buff-name { letter-spacing: 0.16em; }
 /* What it actually does, in the player's terms. */
 .buff-what { color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }

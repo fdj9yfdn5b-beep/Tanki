@@ -175,3 +175,53 @@ export function crateFace(glyph, hex) {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/**
+ * The crate's symbol on its own, transparent, for the HUD badge.
+ *
+ * Same shapes as `crateFace` so the badge on your health bar is visibly the
+ * same thing you drove over — a separate icon set would make the player learn
+ * the mapping twice.
+ */
+export function glyphDataUrl(glyph, hex) {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.strokeStyle = hex;
+  ctx.fillStyle = hex;
+  ctx.lineWidth = 6;
+  ctx.lineJoin = ctx.lineCap = 'round';
+  const m = size / 2;
+
+  if (glyph === 'shield') {
+    ctx.beginPath();
+    ctx.moveTo(m, 10);
+    ctx.lineTo(m + 17, 19);
+    ctx.lineTo(m + 17, 34);
+    ctx.quadraticCurveTo(m + 17, 47, m, 54);
+    ctx.quadraticCurveTo(m - 17, 47, m - 17, 34);
+    ctx.lineTo(m - 17, 19);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (glyph === 'power') {
+    ctx.beginPath();
+    ctx.moveTo(m + 7, 9);
+    ctx.lineTo(m - 11, 34);
+    ctx.lineTo(m + 1, 34);
+    ctx.lineTo(m - 7, 55);
+    ctx.lineTo(m + 12, 31);
+    ctx.lineTo(m - 1, 31);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    for (const dx of [-9, 5]) {
+      ctx.moveTo(m + dx - 7, 17);
+      ctx.lineTo(m + dx + 7, m);
+      ctx.lineTo(m + dx - 7, 47);
+    }
+    ctx.stroke();
+  }
+  return c.toDataURL();
+}

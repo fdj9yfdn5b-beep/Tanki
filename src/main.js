@@ -5,7 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { crateFace } from './textures.js';
+import { crateFace, glyphDataUrl } from './textures.js';
 import { Fx } from './fx.js';
 import { Match } from './match.js';
 import { NetClient } from './net/client.js';
@@ -479,6 +479,7 @@ function updateBuffs() {
       const col = '#' + (spec?.color ?? 0xffffff).toString(16).padStart(6, '0');
       return `<span class="buff" data-k="${k}" style="color:${col}">`
         + `<span class="buff-bar"><i></i></span>`
+        + `<img class="buff-icon" alt="" src="${glyphDataUrl(spec?.glyph, col)}">`
         + `<span class="buff-name">${spec?.name ?? k}</span>`
         + `<span class="buff-what">${spec?.blurb ?? ''}</span>`
         + `<b></b></span>`;
