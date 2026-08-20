@@ -405,11 +405,19 @@ client draws hitting dead centre is a clean miss on the server.** Rail is
 immune, which is exactly why the symptom comes and goes with no pattern the
 player can see — it depends on which weapon is in your hands.
 
-NOT FIXED. The honest fix is to resolve projectile-vs-tank collisions against
-the shooter's own delayed view rather than the present one — test shells against
-`history` rather than against the live world, the same information lag
-compensation already keeps for hitscan. Cheaper mitigations (faster shells, a
-shorter `INTERP_DELAY`) each trade away something real. See §8.
+**Faster shells would not help this, and it is worth seeing why.** The
+separation is a difference of two times — `(T + rtt/2 + f)` on the server
+against `(T + f - D)` on the client — and the flight time `f` appears in both
+and cancels. The gap is `rtt + INTERP_DELAY` no matter how fast the round
+travels. Muzzle speed is the fix for the *leading* problem above; it does
+nothing for this one. Do not conflate them: they have the same symptom from the
+player's chair and completely different causes.
+
+NOT FIXED. The only real fix is to resolve projectile-vs-tank collisions
+against the shooter's own delayed view — test shells against `history`, the
+record lag compensation already keeps for hitscan, instead of against the live
+world. A shorter `INTERP_DELAY` shrinks the constant term but cannot touch the
+`rtt` term, and it buys that by making remote tanks stutter. See §8.
 
 ---
 
@@ -1069,8 +1077,9 @@ Rail holds 100% of its hit rate to 400ms RTT, Twin falls to 40%.
 
 **This is the first thing to pick up.** The fix is to resolve
 projectile-vs-tank against `history` — the same record lag compensation already
-keeps for hitscan — instead of against the live world. Read §4a before starting;
-two cheaper mitigations are described there and both give something up.
+keeps for hitscan — instead of against the live world. Read §4a first, and in
+particular do not reach for faster shells: the flight time cancels out of the
+divergence, so muzzle speed cannot help this one at all.
 
 1. **Ask what still feels wrong**, then measure before changing anything. Every
    single fix this session came from a measurement that contradicted a
