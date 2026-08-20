@@ -127,6 +127,54 @@ function rewindTo(tick, exceptId) {
   return restore;
 }
 
+/**
+ * Advance every shell in flight through the world ITS OWN shooter could see.
+ *
+ * A client draws remote tanks INTERP_DELAY in the past, and the snapshot it is
+ * drawing already spent rtt/2 on the wire; the server, meanwhile, spawned the
+ * shell rtt/2 after the input was sent. So what the shooter watched their round
+ * strike and what the server tested it against were separated by the target's
+ * motion over `rtt + INTERP_DELAY` — 1.33m at zero ping and 3.99m at 200ms,
+ * against a tank 2.81m wide. Past any trivial latency, a shell drawn hitting
+ * dead centre was a clean miss here. Reported as "I see the shell hit and it
+ * takes no health off", four playtests running.
+ *
+ * Note the flight time cancels out of that difference, so making shells faster
+ * could never have fixed it. The only fix is to resolve the shell against the
+ * positions the shooter actually saw, which is exactly what `history` already
+ * holds for hitscan.
+ *
+ * Shells are grouped by rewind depth so the world is moved once per distinct
+ * latency rather than once per shell, and a group at zero rewind (bots, and a
+ * loopback client) skips the machinery entirely.
+ */
+function stepProjectiles(dt) {
+  const shells = match.combat.projectiles;
+  if (!shells.length) return;
+
+  const buckets = new Map();
+  for (const p of shells) {
+    const r = p.lagRewind ?? 0;
+    let set = buckets.get(r);
+    if (!set) buckets.set(r, (set = new Set()));
+    set.add(p);
+  }
+
+  for (const [rewind, only] of buckets) {
+    if (rewind <= 0) { match.combat.update(dt, { only }); continue; }
+
+    const restore = rewindTo(match.tick - rewind, null);
+    // Rapier only rebuilds its query pipeline inside world.step(), so a shape
+    // cast issued right after setTranslation still sees the OLD position. This
+    // is the same trap that made lag compensation a no-op for hitscan until it
+    // was found; it applies identically here.
+    if (restore) match.world.updateSceneQueries();
+    match.combat.update(dt, { only });
+    restoreFrom(restore);
+    if (restore) match.world.updateSceneQueries();
+  }
+}
+
 function restoreFrom(restore) {
   if (!restore) return;
   for (const [id, s] of restore) {
@@ -449,6 +497,7 @@ function stepOnce() {
   // other tanks, fire, put them back. Everything else about the tick — this
   // tank's own movement, its position in the update order — is untouched.
   match.step(inputs, {
+    projectileHook: stepProjectiles,
     fireHook: (tank, id) => {
       const client = clients.get(id);
       const restore = (client && !NO_LAG_COMP) ? rewindTo(match.tick - client.rewindTicks, id) : null;
@@ -475,10 +524,28 @@ function stepOnce() {
       // no longer the shot the client drew. A pass in shotsync means nothing
       // unless this makes it fail. It used to require hand-editing this line,
       // which is the kind of control that quietly stops being run.
+      const spawnedBefore = match.combat.projectiles.length;
       const didFire = match.combat.tryFire(tank, {
         seed: (client?.lastInput && !NO_SHOT_SEED)
           ? shotSeed(id, client.lastInput.seq) : null,
       });
+
+      // Tag the shell with how far behind its shooter is living.
+      //
+      // Rewinding around `tryFire` compensates a HITSCAN shot completely,
+      // because `_fireHitscan` resolves the whole thing inside the rewound
+      // instant. A projectile is only SPAWNED here — the world is restored two
+      // lines below and the shell then flies through present time. So until
+      // now, projectiles had no lag compensation whatsoever, and the shooter
+      // watched their own round strike a tank the server had already moved on.
+      // `_stepProjectiles` is what actually uses this.
+      //
+      // Bots have no client, so they get 0 and keep flying in the present,
+      // which is correct: they have no latency to compensate for.
+      const lagTicks = (client && !NO_LAG_COMP) ? client.rewindTicks : 0;
+      for (let i = spawnedBefore; i < match.combat.projectiles.length; i++) {
+        match.combat.projectiles[i].lagRewind = lagTicks;
+      }
 
       // Diagnose only when a shot actually left the barrel, and after the fact —
       // the world is still rewound here, and aim does not change by firing.

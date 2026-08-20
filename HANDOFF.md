@@ -413,11 +413,39 @@ travels. Muzzle speed is the fix for the *leading* problem above; it does
 nothing for this one. Do not conflate them: they have the same symptom from the
 player's chair and completely different causes.
 
-NOT FIXED. The only real fix is to resolve projectile-vs-tank collisions
-against the shooter's own delayed view — test shells against `history`, the
-record lag compensation already keeps for hitscan, instead of against the live
-world. A shorter `INTERP_DELAY` shrinks the constant term but cannot touch the
-`rtt` term, and it buys that by making remote tanks stutter. See §8.
+**FIXED.** Shells now fly through the world their own shooter could see.
+`server/index.mjs` tags each spawned projectile with its shooter's
+`rewindTicks`, and `stepProjectiles` — installed as `Match.step`'s
+`projectileHook` — groups the shells in flight by rewind depth and advances
+each group with the world rewound to that depth. `Combat.update(dt, { only })`
+exists for exactly this: a shell must be advanced ONCE per tick, so the hook
+replaces the combat step rather than running beside it.
+
+Measured on `tools/lagcomp.mjs`, `WEAPON=twin`, same lane:
+
+| RTT | 0ms | 100ms | 200ms | 400ms |
+|---|---|---|---|---|
+| before | 100% | 64% | 60% | 40% |
+| after | 100% | **132%** | **114%** | **77%** |
+
+Flat-to-rising instead of a monotonic collapse, which is the signature the
+tool's own header describes. It costs nothing measurable: 60.0 ticks/s held
+with two lagged clients and four bots, because the rewind happens once per
+distinct latency per tick and only while a shell is actually in the air, and a
+group at zero rewind (every bot) skips it entirely.
+
+Three things worth knowing before touching it:
+
+- **`rail` cannot be used as the control on this tool.** It fires 0.44/s, so
+  even a 70-second run per latency lands 2-4 shots and the percentages are
+  noise. The guarantee for hitscan is structural instead: `_fireHitscan`
+  resolves inside `tryFire`, and a hitscan shot never puts anything in
+  `combat.projectiles`, so it cannot reach the new path at all.
+- **`NO_LAG_COMP=1` still disables the whole thing**, projectiles included, so
+  the A/B switch remains honest.
+- A tank that died while the shell was flying has its collider disabled, and
+  rewinding moves bodies without re-enabling colliders — so a shell cannot kill
+  a tank twice. That errs in the target's favour, which is the safe direction.
 
 ---
 
@@ -1033,6 +1061,9 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
     frame rate other than 60); rotation ramps roughly halved after "too much
     resistance", and the inertia scaling square-rooted so the heavy end is not
     disproportionately sluggish.
+28. **Lag compensation for projectiles**, which had never existed — see §4a.
+    Shells are tagged with their shooter's rewind depth and flown through the
+    world that shooter could see. Twin's hit retention at 400ms RTT: 40% → 77%.
 27. **"Shots take no health off", fourth report.** Hit registration was clean;
     the damage READOUT was not — the screen reported the damage requested, not
     the damage dealt, so a spawn-protected target showed 175 and lost 0. Spawn
@@ -1068,18 +1099,18 @@ Playtest 9 confirmed these are **no longer reported**: the tank
 dancing/jumping, the snapback on stopping a turn, corner hits, and tank-on-tank
 shaking. Do not go hunting them again without a fresh report.
 
-**"I SEE the shell hit and no health comes off" — CAUSE FOUND, NOT YET FIXED.**
-§4a has it in full: **lag compensation only covers hitscan.** A projectile is
-merely spawned inside the rewind and then flies through present time, so the
-server tests it against a tank that has moved on by `rtt + INTERP_DELAY` —
-more than a tank's width at any real latency. Measured with `lagcomp.mjs`:
-Rail holds 100% of its hit rate to 400ms RTT, Twin falls to 40%.
+**"I SEE the shell hit and no health comes off" — FOUND AND FIXED**, but no
+human has played the fixed build. §4a has it: lag compensation only ever
+covered hitscan, so a shell was resolved against a tank that had moved on by
+`rtt + INTERP_DELAY`. Twin's hit retention at 400ms RTT went 40% → 77%, and
+132% at 100ms where it had been 64%. **Ask whether it is gone before doing
+anything else here.**
 
-**This is the first thing to pick up.** The fix is to resolve
-projectile-vs-tank against `history` — the same record lag compensation already
-keeps for hitscan — instead of against the live world. Read §4a first, and in
-particular do not reach for faster shells: the flight time cancels out of the
-divergence, so muzzle speed cannot help this one at all.
+If it is NOT gone, the thing to suspect next is the leading problem in §4a,
+which is separate and untouched: against a crossing target the two projectile
+weapons essentially never connect past point-blank when aimed dead centre,
+while the bots lead their shots. That one is a design decision awaiting a
+choice, not a bug.
 
 1. **Ask what still feels wrong**, then measure before changing anything. Every
    single fix this session came from a measurement that contradicted a

@@ -338,9 +338,18 @@ export class Combat {
   }
 
   // ── Per-frame ─────────────────────────────────────────────────────────────
-  update(dt) {
+  /**
+   * @param only  Advance ONLY these projectiles, leaving the rest untouched.
+   *
+   * This exists so the server can step shells in batches with the world rewound
+   * to the moment each shooter actually saw — see `_stepProjectiles` in
+   * server/index.mjs. Passing nothing advances everything, which is what the
+   * client and the offline game do.
+   */
+  update(dt, { only = null } = {}) {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
+      if (only && !only.has(p)) continue;
       p.life -= dt;
 
       if (p.gravity) p.vel.y -= p.gravity * dt;

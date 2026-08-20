@@ -268,7 +268,14 @@ export class Match {
    * firing have to stay in the same pass, in the same order, or the client's
    * prediction of its own tank stops matching.
    */
-  step(inputs, { fireHook = null } = {}) {
+  /**
+   * `projectileHook` lets the server advance shells with the world rewound, the
+   * same way `fireHook` wraps the shot itself. It has to be a REPLACEMENT for
+   * the combat step rather than something bolted on beside it, because a shell
+   * must be advanced exactly once per tick — stepping it here and again in the
+   * hook would double its speed.
+   */
+  step(inputs, { fireHook = null, projectileHook = null } = {}) {
     const live = this.phase === 'live';
     for (const [id, tank] of this.tanks) {
       const input = inputs.get(id) ?? EMPTY_INPUT;
@@ -282,7 +289,8 @@ export class Match {
       }
     }
 
-    this.combat.update(TICK_DT);
+    if (projectileHook) projectileHook(TICK_DT);
+    else this.combat.update(TICK_DT);
     if (live) this._stepDrops(TICK_DT);
     this.world.step();
     this.tick++;
