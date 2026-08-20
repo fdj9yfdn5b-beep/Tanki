@@ -5,6 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
+import { crateFace } from './textures.js';
 import { Fx } from './fx.js';
 import { Match } from './match.js';
 import { NetClient } from './net/client.js';
@@ -470,15 +471,28 @@ function updateBuffs() {
   const sig = names.join(',');
   if (sig !== buffSig) {
     buffSig = sig;
+    // Name, what it is worth, and a bar that drains. A name on its own told the
+    // player nothing — "I picked up SHIELD and I have no idea whether I still
+    // have it, for how long, or what it is doing for me" was the report.
     hud.buffs.innerHTML = names.map((k) => {
       const spec = DROP_KINDS[k];
       const col = '#' + (spec?.color ?? 0xffffff).toString(16).padStart(6, '0');
-      return `<span class="buff" data-k="${k}" style="color:${col}">${spec?.name ?? k} <b></b></span>`;
+      return `<span class="buff" data-k="${k}" style="color:${col}">`
+        + `<span class="buff-bar"><i></i></span>`
+        + `<span class="buff-name">${spec?.name ?? k}</span>`
+        + `<span class="buff-what">${spec?.blurb ?? ''}</span>`
+        + `<b></b></span>`;
     }).join('');
   }
   for (const el of hud.buffs.children) {
-    const left = player.effects.get(el.dataset.k);
-    if (left !== undefined) el.querySelector('b').textContent = left.toFixed(1) + 's';
+    const k = el.dataset.k;
+    const left = player.effects.get(k);
+    if (left === undefined) continue;
+    const total = DROP_KINDS[k]?.duration ?? 1;
+    el.querySelector('b').textContent = left.toFixed(1) + 's';
+    el.querySelector('.buff-bar i').style.width = `${Math.max(0, left / total) * 100}%`;
+    // Flash the last two seconds so it is obvious it is about to go.
+    el.classList.toggle('expiring', left <= 2);
   }
 }
 
@@ -995,10 +1009,17 @@ function makeCrate(kind) {
   const g = new THREE.Group();
   const geo = new THREE.BoxGeometry(1.7, 1.7, 1.7);
 
-  g.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    color: spec.color, emissive: spec.color, emissiveIntensity: 0.9,
-    roughness: 0.35, metalness: 0.5, transparent: true, opacity: 0.85,
-  })));
+  // Symbol on every face, so it says what it is from any angle.
+  const hex = '#' + spec.color.toString(16).padStart(6, '0');
+  // emissiveMap, not a flat emissive colour: the glow then follows the symbol
+  // instead of washing evenly over the whole face and flattening it out.
+  const tex = crateFace(spec.glyph, hex);
+  const face = new THREE.MeshStandardMaterial({
+    map: tex,
+    emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 1.1,
+    roughness: 0.45, metalness: 0.25,
+  });
+  g.add(new THREE.Mesh(geo, face));
   g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),
     new THREE.LineBasicMaterial({ color: 0xffffff })));
 

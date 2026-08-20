@@ -12,7 +12,10 @@ let sprite = null;
 const glow = () => (sprite ??= glowSprite());
 
 // Rapier renamed `toi` to `timeOfImpact` between releases; accept either.
-const impactDistance = (hit) => hit.timeOfImpact ?? hit.toi;
+const impactDistance = (hit) => hit.timeOfImpact ?? hit.time_of_impact ?? hit.toi;
+
+// Radius the shell is swept with. See the note in the Combat constructor.
+const SHELL_RADIUS = 0.28;
 
 export class Combat {
   constructor({ world, RAPIER, scene, fx }) {
@@ -31,6 +34,11 @@ export class Combat {
     // for that long.
     this.shots = [];
     this.maxShotLog = 2000;
+    // A shell is swept as a BALL, not as a line. Its sprite renders about 0.45m
+    // across, so a zero-width ray meant a round whose visible body overlapped a
+    // hull by up to that much registered nothing at all. Deliberately smaller
+    // than the sprite — the sprite is a soft glow, and this is its solid core.
+    this._shell = null;
   }
 
   register(tank) {
@@ -316,16 +324,21 @@ export class Combat {
       let consumed = false;
 
       if (dist > 1e-5) {
-        const ray = new this.RAPIER.Ray(
-          { x: p.pos.x, y: p.pos.y, z: p.pos.z }, { x: dir.x, y: dir.y, z: dir.z });
-        const hit = this.world.castRayAndGetNormal(
-          ray, dist, true, undefined, undefined, undefined, p.owner?.body);
+        this._shell ??= new this.RAPIER.Ball(SHELL_RADIUS);
+        const hit = this.world.castShape(
+          { x: p.pos.x, y: p.pos.y, z: p.pos.z },
+          { x: 0, y: 0, z: 0, w: 1 },
+          { x: dir.x, y: dir.y, z: dir.z },
+          this._shell, 0, dist, true,
+          undefined, undefined, undefined, p.owner?.body);
 
         if (hit) {
           const d = impactDistance(hit);
           const point = p.pos.clone().addScaledVector(dir, d);
           const target = this.byCollider.get(hit.collider.handle);
-          const n = new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z);
+          // castShape reports the normal on the struck shape as `normal1`.
+          const hn = hit.normal1 ?? hit.normal ?? { x: 0, y: 1, z: 0 };
+          const n = new THREE.Vector3(hn.x, hn.y, hn.z);
 
           if (p.weapon.splash) {
             this.fx?.explosion(point, p.weapon.splash, p.weapon.color);

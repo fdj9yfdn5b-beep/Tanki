@@ -145,9 +145,20 @@ export class Tank {
     //
     // Extended upward only: the bottom face stays where it was, so ground
     // contact, driving and ramming are unchanged.
+    // Width and depth follow the VISIBLE tank, not the nominal hull size.
+    // `_buildVisuals` puts the treads at ±0.42w and makes them 0.24w wide, so
+    // the tank you can see reaches 0.54w — while the box stopped at 0.50w, and
+    // a shot into the outer edge of a track passed straight through it. Same
+    // for length: the treads run 1.04d. Small, but it is exactly the band a
+    // player aims at when they lead a target, and "hits on the corner do
+    // nothing" is what it feels like.
+    const [fw, , fd] = this.hull.size;
+    const visX = this.hull.hover ? hx : fw * 0.54;
+    const visZ = this.hull.hover ? hz : fd * 0.52;
+
     const rise = TURRET_HITBOX_RISE;
     const skirt = this.hull.hover ? HOVER_SKIRT : 0;
-    const colDesc = RAPIER.ColliderDesc.cuboid(hx, hy + (rise + skirt) / 2, hz)
+    const colDesc = RAPIER.ColliderDesc.cuboid(visX, hy + (rise + skirt) / 2, visZ)
       .setTranslation(0, (rise - skirt) / 2, 0)
       .setMass(this.hull.mass * 8)
       .setFriction(0.6)

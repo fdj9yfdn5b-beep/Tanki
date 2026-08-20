@@ -107,3 +107,71 @@ export function glowSprite() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/**
+ * The face of an air-drop crate: a big symbol on a dark plate.
+ *
+ * Colour alone was the only thing telling the three kinds apart, which asks the
+ * player to have memorised a legend before their first pickup. A symbol says
+ * what it is from across the map, and it still reads for anyone who cannot
+ * separate the blue from the green.
+ */
+export function crateFace(glyph, hex) {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = hex;
+  ctx.lineWidth = 10;
+  ctx.strokeRect(14, 14, size - 28, size - 28);
+
+  // The glyph itself is near-white with a coloured halo. A flat coloured symbol
+  // on a coloured emissive box loses all its contrast at range — the colour
+  // says which pickup it is, the shape has to survive the glow.
+  ctx.shadowColor = hex;
+  ctx.shadowBlur = 26;
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 20;
+  ctx.lineJoin = ctx.lineCap = 'round';
+  const m = size / 2;
+
+  if (glyph === 'shield') {
+    ctx.beginPath();
+    ctx.moveTo(m, 56);
+    ctx.lineTo(m + 62, 88);
+    ctx.lineTo(m + 62, 140);
+    ctx.quadraticCurveTo(m + 62, 186, m, 208);
+    ctx.quadraticCurveTo(m - 62, 186, m - 62, 140);
+    ctx.lineTo(m - 62, 88);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (glyph === 'power') {
+    // A lightning bolt: unmistakable at a glance, and it reads as "more".
+    ctx.beginPath();
+    ctx.moveTo(m + 26, 52);
+    ctx.lineTo(m - 40, 134);
+    ctx.lineTo(m + 4, 134);
+    ctx.lineTo(m - 24, 210);
+    ctx.lineTo(m + 44, 122);
+    ctx.lineTo(m - 2, 122);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // Double chevron, pointing the way you are about to go faster.
+    ctx.beginPath();
+    for (const dx of [-34, 20]) {
+      ctx.moveTo(m + dx - 26, 82);
+      ctx.lineTo(m + dx + 26, m);
+      ctx.lineTo(m + dx - 26, 174);
+    }
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}

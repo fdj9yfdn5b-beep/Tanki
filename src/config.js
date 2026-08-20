@@ -361,6 +361,11 @@ export const DROPS = {
 export const DROP_KINDS = {
   shield: {
     name: 'SHIELD',
+    // What it actually does, in the player's terms. Shown on the HUD next to
+    // the countdown: knowing you have SHIELD is useless without knowing what
+    // SHIELD is worth, and a name alone taught nobody anything.
+    blurb: '-45% damage taken',
+    glyph: 'shield',
     duration: 10,
     color: 0x6fd3ff,
     // Takes 45% off incoming damage. Not immunity — a protected tank still has
@@ -369,12 +374,16 @@ export const DROP_KINDS = {
   },
   power: {
     name: 'POWER',
+    blurb: '+50% damage dealt',
+    glyph: 'power',
     duration: 10,
     color: 0xff8a3d,
     damageDealt: 1.5,
   },
   speed: {
     name: 'SPEED',
+    blurb: '+35% speed',
+    glyph: 'speed',
     duration: 12,
     color: 0x8fe388,
     maxSpeed: 1.35,

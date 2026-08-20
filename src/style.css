@@ -530,11 +530,30 @@ body.touch #help { display: none; }
    glance — "can I take this fight" is the same question as how much HP is left. */
 #buffs { display: flex; gap: 6px; margin-top: 6px; min-height: 20px; }
 .buff {
-  display: flex; align-items: center; gap: 5px;
-  padding: 3px 8px;
+  position: relative;
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 4px 9px;
   border-radius: 3px;
   border: 1px solid currentColor;
-  background: rgba(13, 17, 23, 0.7);
-  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  background: rgba(13, 17, 23, 0.78);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+  overflow: hidden;
 }
-.buff b { color: var(--text); font-weight: 700; }
+.buff-name { letter-spacing: 0.16em; }
+/* What it actually does, in the player's terms. */
+.buff-what { color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
+.buff b { color: var(--text); font-weight: 700; margin-left: 2px; }
+
+/* Time remaining, drawn as a draining bar behind the text — readable from the
+   corner of the eye without reading the number. */
+.buff-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.buff-bar i {
+  display: block; height: 100%; width: 100%;
+  background: currentColor;
+  transition: width 0.1s linear;
+}
+.buff.expiring { animation: buff-flash 0.5s steps(2, end) infinite; }
+@keyframes buff-flash { 50% { opacity: 0.45; } }
