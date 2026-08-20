@@ -23,8 +23,36 @@ npm install
 | multiplayer, local | `npm run server` + `npm run dev` | http://localhost:5178/?online=1 |
 | multiplayer, one port | `npm run host` | http://localhost:8099/?online=1 |
 | same Wi-Fi | `npm run host` | server prints the LAN URL |
-| over the internet | `npm run host` then `npm run tunnel` | it prints a link it has already tested |
+| over the internet | **already deployed — see below** | https://tanki-nh1l.onrender.com/?online=1 |
+| a throwaway link | `npm run host` then `npm run tunnel` | it prints a link it has already tested |
 | on a phone | open that same URL — touch controls appear on their own | force with `?touch=1`, force off with `?touch=0` |
+
+## THE GAME IS DEPLOYED. Use the permanent link.
+
+**https://tanki-nh1l.onrender.com/?online=1**
+
+Render free tier, deployed from `render.yaml` in this repo, GitHub remote
+`fdj9yfdn5b-beep/Tanki`. **Every `git push origin main` redeploys it** — that is
+`autoDeploy: true`, and it takes 3-5 minutes. Confirm a deploy landed by
+watching `/healthz`: the tick counter resets to near zero when a fresh process
+takes over.
+
+Do not reach for the tunnel any more. Four separate times a link was handed over
+and was dead within the hour. Everything below about tunnels is for a quick
+local share only.
+
+**The free instance is kept awake by pinging itself.** `server/index.mjs` fetches
+its own `RENDER_EXTERNAL_URL/healthz` every 10 minutes. This is not optional
+polish: Render suspends an idle instance and then does NOT hold the next request
+while it restarts — it answers **404 with `x-render-routing: no-server`**.
+Measured: two 404s then a 200, ~25 seconds apart. So a friend clicking a cold
+link is told "Not Found" and reasonably concludes the game is broken, and the
+client's own connect-retry cannot help because it only exists once the page has
+loaded. Free instances get 750 hours a month against a ~730 hour month, so one
+service staying up fits — **but only one**; a second free service on the account
+would exceed it.
+
+---
 
 **Quick tunnels expire, and they fail dishonestly.** The hostname stops
 resolving while the `cloudflared` process stays alive and keeps retrying
@@ -75,6 +103,7 @@ On the hover hull `A`/`D` strafe instead of steering — its body follows the gu
 | `src/net/client.js` | prediction / reconciliation / interpolation |
 | `server/index.mjs` | authoritative server, lag comp, bots, static hosting |
 | `tools/*` | balance harness + netcode tests (see §6), plus `tunnel.mjs` |
+| `render.yaml` | the live deployment. Pushing to `main` redeploys. |
 
 **The one structural decision everything rests on:** `Match.step(inputs)` contains
 everything that decides an outcome and touches no renderer. Server and client run
@@ -93,7 +122,16 @@ was edited.
 - Scoreboard: kill 10 pts, assist 5 pts (assist = damaged the victim within 8s
   and did not land the kill). Verified arithmetic over 180s of bot combat.
 - Weapon balance tuned by optimiser and validated on held-out duels
-- Deployment ready: `Dockerfile`, `fly.toml`, `/healthz`, graceful SIGTERM
+- **Deployed and live on Render** — see §1. `Dockerfile`, `render.yaml`,
+  `/healthz`, graceful SIGTERM, self-ping keep-alive. `fly.toml` is also present
+  and correct but unused (Fly requires a card; Render does not).
+- **Air-dropped crates.** A crate falls every 18s with a light column, up to 3 on
+  the field, and grants SHIELD (-45% damage taken), POWER (+50% damage dealt) or
+  SPEED (+35%) for 10-12s. Every effect is a MULTIPLIER on the tuned numbers,
+  never a flat grant, so each weapon's shape at range survives. Lives in
+  `Match._stepDrops` so client and server run identical code. Verified headless:
+  spawn, fall, pickup, multiplier applied, expiry, cleared on death; and the
+  local player's HUD readout verified through the real reconciliation path.
 - **`wraith`, the anti-grav hull.** NOTE: measurably imbalanced against Rail and
   the cause is not yet found — see §4 before touching its numbers.
   Strafes in any direction with no turn, so a
@@ -200,6 +238,39 @@ against *stale* positions. Proven directly: move a body from x=20 to x=40 and th
 ray keeps reporting 18.5m until `updateSceneQueries()` is called, then 38.5m. Lag
 compensation was doing **nothing**. Symptom: players' shots rarely landed while
 server-side bots (zero latency) hit normally.
+
+**Three separate bugs all read to the player as "my shots do nothing".** Worth
+knowing as a set, because each was found only after the previous was fixed and
+the complaint survived:
+
+1. *Corpses stayed solid.* A killed tank kept its collider where it fell.
+   `_fireHitscan` found a target that was not `alive`, fell through to the
+   terrain branch and ended the beam there for no damage — and the corpse is
+   invisible, so shots appeared to stop in mid-air. Fixed by disabling the
+   collider on death. `tools/corpseblock.mjs`, with a control.
+2. *The hit box was narrower than the tank you can see.* Treads sit at ±0.42w
+   and are 0.24w wide, so the visible hull reaches 0.54w while the box stopped
+   at 0.50w.
+3. *A shell was swept as a zero-width ray.* Its sprite renders ~0.45m across, so
+   a round whose visible body overlapped a hull by up to that much registered
+   nothing. Now swept as a 0.28m ball. Effective hit envelope **1.30m → 1.65m**,
+   against the 1.68m you can see. TTK 6.33s → 6.37s. `tools/edgehit.mjs`.
+
+**Anything the client PREDICTS must be on the wire.** Twice now a value became
+predicted state and was not added to the snapshot, and both times the symptom
+was a snap the player felt but no test caught:
+
+- `turnVel` — added when hull rotation got an acceleration ramp. Client and
+  server ramped down from different values, so stopping a turn yanked the tank
+  back. p95 rotational correction 3.38° → 0.05°.
+- effects from air drops — `interpolate()` carries them for remote tanks but
+  deliberately skips our own ("ours is predicted"), and the client never runs
+  `_stepDrops`. So `applyTankState` was the only route to the local player and
+  did not carry them: **the one player who needs to know what they picked up was
+  the only one never told.**
+
+The checklist when adding predicted state: does `snapshot()` carry it, does
+`applyTankState` restore it, does `interpolate()` apply it to remote tanks?
 
 **A flat trajectory means every muzzle must sit inside every other hull's box.**
 Shots have no gravity and no elevation (§5), so a shot lands only if the
@@ -645,6 +716,9 @@ node tools/spreadsync.mjs        # client/server shot agreement, pure arithmetic
 node tools/firerate.mjs          # shots drawn per shot fired (LAG_TICKS=9 to stress)
 node tools/hitheight.mjs         # can every hull shoot every other hull? run after ANY
                                  # change to hull size, ride height or barrel height
+node tools/corpseblock.mjs       # do dead tanks block shots? (has a negative control)
+node tools/edgehit.mjs           # how far off-centre a shot still lands, vs the visible tank
+npm run tunnel                   # throwaway public link, verified before it is printed
 BOTS=0 PORT=8100 node server/index.mjs   # …then, against that server:
 PORT=8100 node tools/shotsync.mjs        # same question, end-to-end
 ```
@@ -707,6 +781,11 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
 21. Two-player playtest: camera fades cover instead of climbing over it; camera
     yaw locked to the turret (was 32° of aim error); damage numbers; reload bar
     for every weapon.
+25. Playtest 9: hit box widened to the visible tank and the shell swept as a
+    ball (corner hits); pickups given a description, a draining timer and the
+    crate's own symbol — and made to actually reach the local player at all.
+24. Air-dropped crates with timed abilities; deployed to Render with a self-ping
+    keep-alive; corpse colliders, full respawn reset, spawn protection.
 22. Camera yaw moved from locked to feed-forward + gentle catch-up (locked was
     too harsh when the hull moved); turret and hull rotation given acceleration
     limits so the settle scales with speed.
@@ -729,23 +808,41 @@ and the seeding fix in §4 is defeated. The client bundle alone only needs
 
 ## 8. Start the next session by
 
-1. **Game modes.** Shots and loadouts are settled; there is still nothing to
-   win. Teams, a score target, a match end, and a scoreboard that resets.
-2. Asking whether the loadout screen and the phone controls survived contact
-   with a second human — both were verified with browser tabs and touch
-   emulation, never with two people on two devices. **No real phone has run
-   this**; emulation cannot tell you about thumb reach, sustained frame rate on
-   a mobile GPU, or whether auto-fire feels like help or like the game playing
-   itself.
-3. Auto-fire is currently touch-only and always available there. If a phone
-   player ends up dominating keyboard players, that is the first thing to look
-   at — it removes a real skill (timing) that desktop players still pay.
-4. If hits ever fail again: run `PORT=8100 BOTS=0 node server/index.mjs` and
-   `PORT=8100 node tools/shotsync.mjs` first — that isolates whether the two ends
-   still describe the same shot. If they do, the remaining suspect is the rewind
-   itself, not the shot: run with `TANKI_DEV=1` and watch `[diag] player shots …`
-   for what each ray saw after the rewind (now counted per shot, not per tick).
-5. If the visuals are still too busy, `config.FX` is one place and every count
-   is in it. But read §4 first: three rounds of density tuning were spent on a
-   bug that had nothing to do with counts, so before touching them run
-   `node tools/firerate.mjs` and confirm the ratio is still 1.00.
+Playtest 9 confirmed these are **no longer reported**: shots not registering,
+the tank dancing/jumping, the snapback on stopping a turn, corner hits, and
+tank-on-tank shaking. Do not go hunting them again without a fresh report.
+
+1. **Ask what still feels wrong**, then measure before changing anything. Every
+   single fix this session came from a measurement that contradicted a
+   hypothesis — see §4. Four separate times a plausible diagnosis was falsified
+   by a test, and twice a *correct* fix was nearly discarded because the test
+   could not exercise the case (a smooth sine steer never produces the
+   discontinuity of releasing a key; forcing an effect locally bypasses the
+   exact network path that was broken).
+
+2. **Game modes.** This is the biggest thing still missing. Shots, hulls,
+   loadouts, pickups and hosting are all settled; there is still nothing to
+   *win*. Teams, a score target, a match end, a scoreboard that resets.
+
+3. **The Wraith / Rail imbalance is still unexplained** (§4). It wins 87-89% on
+   Rail. Two hypotheses were built and falsified. Per this project's own
+   history, the next step is to instrument ONE duel rather than build a third
+   hypothesis. Note also that bots never send `strafe`, so half of what that
+   hull is cannot appear in the harness at all.
+
+4. **Never trust a green test you have not seen fail.** Two tests here reported
+   PASS while measuring nothing: `shotsync` matched each shot to the nearest of
+   ~600 candidate seeds (any value has a neighbour), and `hulltest` reported
+   Wraith at exactly 0.500 which was not balance but *both tanks unable to
+   damage each other*. Both were caught by adding a deliberate negative control.
+   Every test in `tools/` that matters now has one.
+
+5. **If hits ever fail again**, the order is: `tools/corpseblock.mjs`,
+   `tools/hitheight.mjs`, `tools/edgehit.mjs`, then `tools/shotsync.mjs`
+   against a live server. Damage numbers are on screen now, which separates
+   "hit for very little" (range falloff) from "no damage at all".
+
+6. **If the visuals are too busy**, `config.FX` is one place and every count is
+   in it — but read §4 first: three rounds of density tuning were spent on a bug
+   that had nothing to do with counts. Run `node tools/firerate.mjs` and confirm
+   the ratio is still 1.00 before touching them.
