@@ -38,7 +38,23 @@ const PORT = Number(process.env.PORT ?? 8100);
 const URL = process.env.URL ?? `ws://localhost:${PORT}/ws`;
 const SECONDS = Number(process.env.SECONDS ?? 10);
 const SIGMA = WEAPONS.twin.spread;
-const TOL = 0.02;   // `dir` is rounded to 3dp on the wire; 0.001/σ ≈ 0.02
+// How far a reconstructed draw may sit from the seed's own value and still
+// count as the same shot. This is pure wire rounding: `dir` goes out rounded to
+// 3 decimals, so each component carries up to 0.0005 of error, and dividing by
+// σ turns that into this many units of the draw.
+//
+// It was HARD-CODED at 0.02, with a comment deriving it as 0.001/σ. That
+// derivation was right when Twin's spread was ~0.05. Playtest 4 cut every
+// spread to roughly a third (§4) — σ is 0.018 now — which tripled the
+// quantisation without touching the tolerance, and the test has been rejecting
+// CORRECT matches ever since. It reported 4-12 of 22 on a build measured, from
+// the server's own broadcast, to be seeding all 23 of 23 shots correctly.
+//
+// A test that fails when nothing is wrong costs exactly what a test that passes
+// when something is wrong costs: the next session spends its time on a bug that
+// is not there. Derived from σ now, so cutting the spread again cannot silently
+// re-break it.
+const TOL = 0.0011 / SIGMA;
 
 // Shots are 27 ticks apart (fireInterval 0.4398s at 60Hz = 26.4, and the server
 // fires on the first tick where cooldown has expired), give or take the tick
@@ -169,10 +185,23 @@ function report() {
 
   // If the server was run with TANKI_SHOTLOG=1 the seqs are not guessed at all:
   // paste its `[shotlog] seq=` values in and the chain search is skipped.
+  //
+  // The seqs the server logs cover EVERY shot it fired. The shots reconstructed
+  // here do not: any shot straddling a snapshot where the tank was turning was
+  // dropped above. Lining the two lists up index-for-index therefore slides out
+  // of alignment at the first drop and reports nonsense — measured, 0/21 with
+  // exact sequence numbers on a build whose chain search was matching twelve
+  // consecutive shots at the same moment. `skips[i]` is how many were dropped
+  // before shot i, which is exactly what the offset needs.
   const told = (process.env.SEQS ?? '').split(/[,\s]+/).filter(Boolean).map(Number);
+  let toldAt = 0;
+  const aligned = drew.map((_, i) => {
+    toldAt += i === 0 ? 0 : 1 + skips[i];
+    return told[toldAt];
+  });
   const best = told.length
-    ? { len: told.filter((seq, i) => i < drew.length && Math.abs(g(seq) - drew[i]) < TOL).length,
-        seqs: told.slice(0, drew.length) }
+    ? { len: aligned.filter((seq, i) => seq !== undefined && Math.abs(g(seq) - drew[i]) < TOL).length,
+        seqs: aligned }
     : solve();
   const rows = best.seqs.slice(0, 8).map((seq, i) => ({
     shot: i,

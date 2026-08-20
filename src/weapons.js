@@ -308,8 +308,16 @@ export class Combat {
     // (inside takeDamage). Both are multipliers on the tuned numbers rather
     // than flat additions, so the weapon's shape at range survives.
     if (source?.effectMul) amount *= source.effectMul('damageDealt');
-    const killed = target.takeDamage(amount, source);
-    this.onHit?.(target, amount, source, point);
+    // Report what LANDED, not what was requested. `takeDamage` may deal less
+    // than asked — spawn protection eats all of it, SHIELD eats 45%, and a tank
+    // on 20 HP can only lose 20 — and reporting the request meant the floating
+    // number, the assist ledger and the DEV diagnostics were all describing a
+    // shot that did not happen that way. The spawn-protection case is the one
+    // that reads as a bug to a player: the screen says 175 and the health bar
+    // does not move, which is precisely "I shoot a tank and it takes no health
+    // off". See tools/nodamage.mjs.
+    const { dealt, killed, guarded } = target.takeDamage(amount, source);
+    this.onHit?.(target, dealt, source, point, { guarded });
     if (killed) {
       this.fx?.explosion(target.position, 7, 0xff8a3d);
       this.fx?.smoke(target.position, 10);

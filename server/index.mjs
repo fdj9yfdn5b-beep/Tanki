@@ -19,6 +19,7 @@ import { shotSeed } from '../src/rng.js';
 const PORT = Number(process.env.PORT ?? 8099);
 const DEV = process.env.TANKI_DEV === '1';
 const NO_LAG_COMP = process.env.NO_LAG_COMP === '1';   // A/B switch for testing
+const NO_SHOT_SEED = process.env.NO_SHOT_SEED === '1'; // negative control, see below
 // MODE=ffa runs the same server without sides. Picked once at boot rather than
 // voted on mid-match: switching modes would have to move everyone between
 // teams while shots are in the air, and there is nothing to gain from it yet.
@@ -469,8 +470,14 @@ function stepOnce() {
       // Same seed the client used when it predicted this exact input, so the
       // shot it drew and the shot resolved here are one shot. Bots have no
       // client mirroring them, so they keep the free-running stream.
+      // NO_SHOT_SEED=1 is the NEGATIVE CONTROL for tools/shotsync.mjs: it puts
+      // the server back on its own free-running RNG, so the shot it resolves is
+      // no longer the shot the client drew. A pass in shotsync means nothing
+      // unless this makes it fail. It used to require hand-editing this line,
+      // which is the kind of control that quietly stops being run.
       const didFire = match.combat.tryFire(tank, {
-        seed: client?.lastInput ? shotSeed(id, client.lastInput.seq) : null,
+        seed: (client?.lastInput && !NO_SHOT_SEED)
+          ? shotSeed(id, client.lastInput.seq) : null,
       });
 
       // Diagnose only when a shot actually left the barrel, and after the fact —

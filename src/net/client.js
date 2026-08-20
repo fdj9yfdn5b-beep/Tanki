@@ -322,6 +322,10 @@ export class NetClient {
       for (let i = 0; sb.fx && i < sb.fx.length; i += 2) tank.effects.set(sb.fx[i], sb.fx[i + 1]);
       tank._syncHealthBar?.();
       tank.syncChargeVisual?.();
+      // Spawn protection, same reason as the charge ring above: remote tanks
+      // never run update(), and the tank whose invulnerability you need to see
+      // is by definition not yours.
+      tank.syncGuardVisual?.();
       // Push the interpolated body transform onto the visual rig. Interpolation
       // only touches the physics body; without this the mesh never moves.
       tank.syncTransform();

@@ -579,12 +579,27 @@ export class Tank {
     return out;
   }
 
+  /**
+   * @returns {{dealt:number, killed:boolean, guarded:boolean}}
+   *
+   * It used to return a bare `killed` boolean, and `Combat._applyDamage`
+   * reported the damage it REQUESTED to `onHit` — so the number that floated
+   * over the tank was what the shot was worth, not what the tank lost. Three
+   * things sit between the two, and all three were invisible: spawn protection
+   * (total immunity, so the screen said 175 and the health bar did not move at
+   * all), the SHIELD pickup (a 0.55 multiplier), and the target's remaining HP.
+   * Measured over 9 minutes of bot combat: the screen claimed 35,719 damage and
+   * 31,831 landed — 89%. See tools/nodamage.mjs.
+   */
   takeDamage(amount, from) {
-    if (!this.alive) return false;
+    if (!this.alive) return { dealt: 0, killed: false, guarded: false };
     // Just respawned: shrug it off entirely. Reducing the damage instead would
     // still let a camped spawn whittle someone down before they can move.
-    if (this.spawnGuard > 0) return false;
+    if (this.spawnGuard > 0) return { dealt: 0, killed: false, guarded: true };
     amount *= this.effectMul('damageTaken');
+    // What the tank can still lose. A 175-damage shot on a tank with 20 HP left
+    // deals 20, and saying otherwise inflates every damage readout in the game.
+    const dealt = Math.min(this.hp, amount);
     this.hp = Math.max(0, this.hp - amount);
 
     // Remember who is shooting us. Without this a bot happily keeps grinding on
@@ -614,9 +629,9 @@ export class Tank {
       // score consistent with kills. Incrementing here as well double-counted
       // every kill — total kills came out at exactly 2x total deaths, while
       // points (awarded once) matched the true count and so looked "wrong".
-      return true;
+      return { dealt, killed: true, guarded: false };
     }
-    return false;
+    return { dealt, killed: false, guarded: false };
   }
 
   /**
@@ -676,6 +691,7 @@ export class Tank {
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.recoilOffset *= Math.max(0, 1 - dt * 9);
     this.threatTimer = Math.max(0, (this.threatTimer ?? 0) - dt);
+    this.syncGuardVisual();
 
     if (!this.alive) {
       this.root.visible = false;
@@ -900,6 +916,42 @@ export class Tank {
     this.accent.material.emissiveIntensity = 1.1 + c * 2.4;
     this.accent.material.emissive.setHex(this.weapon.color).lerp(WHITE, c * 0.4);
     this.accent.scale.setScalar(1 + c * 0.3);
+  }
+
+  /**
+   * Spawn protection, made visible.
+   *
+   * `spawnGuard` gives two full seconds of TOTAL immunity and had no tell of
+   * any kind — not on the protected tank, not on the shooter's screen. So
+   * unloading into someone who had just respawned did exactly nothing, with
+   * nothing anywhere saying why, which is indistinguishable from the three
+   * real hit-registration bugs in §4 and reads as a fourth. Respawns are
+   * constant and the freshly-respawned are exactly who you chase.
+   *
+   * Drawn as a translucent flicker on the tank's own materials. Deliberately
+   * not another mesh: this has to be legible at 60m on a tank the size of a
+   * thumbnail, and a shell that size is a smudge, while "you can see through
+   * it" survives any distance.
+   *
+   * Called from `update()` AND from the network client's `interpolate()`, for
+   * the reason `syncChargeVisual` is: remote tanks never run `update()`, and
+   * §4 has three separate instances of a visual that only the local player ever
+   * saw. The one tank that must show this is somebody ELSE's.
+   */
+  syncGuardVisual() {
+    const mats = this.teamMats;
+    if (!mats) return;
+    const guarded = this.alive && this.spawnGuard > 0;
+    if (!guarded && !this._wasGuarded) return;      // nothing to do, the common case
+    this._wasGuarded = guarded;
+    // A slow pulse rather than a constant fade, so it cannot be mistaken for
+    // the camera's occlusion fade, which is also translucency on a hull.
+    const pulse = guarded ? 0.34 + 0.16 * Math.sin(this.spawnGuard * 11) : 1;
+    for (const m of mats) {
+      m.transparent = guarded;
+      m.opacity = pulse;
+      m.depthWrite = !guarded;
+    }
   }
 
   faceCamera(camera) {

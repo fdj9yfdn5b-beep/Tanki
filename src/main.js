@@ -315,7 +315,13 @@ function startOnline(lo, status) {
         //
         // What it DOES draw is the number, which is the part that was missing:
         // how much the shot was worth.
-        if (e.by === net.id && who !== player) showDamage(who, e.dmg);
+        // `sg` means the shot connected and the target was spawn-protected —
+        // two seconds of total immunity. Without saying so, a shot that lands
+        // for zero is exactly what the bugs in §4 looked like, and a player has
+        // no way to tell a working rule from a broken game.
+        if (e.by === net.id && who !== player) {
+          showDamage(who, e.dmg, e.sg ? 'protected' : null);
+        }
       } else if (e.e === 'ff') {
         // Your shot landed on a teammate. Drawn where the damage number would
         // have been, because "nothing appeared" is exactly what a miss looks
@@ -537,7 +543,9 @@ function showDamage(target, amount, variant = null) {
   const el = document.createElement('div');
   el.className = 'dmg-num'
     + (variant ? ` ${variant}` : amount < 12 ? ' weak' : amount >= 60 ? ' big' : '');
-  el.textContent = variant === 'friendly' ? 'FRIENDLY' : Math.round(amount);
+  el.textContent = variant === 'friendly' ? 'FRIENDLY'
+    : variant === 'protected' ? 'PROTECTED'
+    : Math.round(amount);
   el.style.left = `${(_dmgProject.x * 0.5 + 0.5) * innerWidth}px`;
   el.style.top = `${(-_dmgProject.y * 0.5 + 0.5) * innerHeight}px`;
   hud.damage.appendChild(el);
@@ -751,8 +759,10 @@ combat.onKill = (victim, killer) => {
 // Offline there is no server to report hits, so damage numbers come straight
 // off the local combat resolution. Online this handler is not used; the `hit`
 // event is (see onEvent), because there the server owns the number.
-combat.onHit = (target, amount, source) => {
-  if (!ONLINE && source === player && target !== player) showDamage(target, amount);
+combat.onHit = (target, amount, source, point, meta = {}) => {
+  if (!ONLINE && source === player && target !== player) {
+    showDamage(target, amount, meta.guarded ? 'protected' : null);
+  }
 };
 
 // ── Camera ──────────────────────────────────────────────────────────────────

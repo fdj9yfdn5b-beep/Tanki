@@ -674,6 +674,14 @@ body.touch #help { display: none; }
   color: #9aa4b2; font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
 }
 
+/* A shot that landed on a tank still inside its two seconds of post-respawn
+   immunity. Same reasoning as FRIENDLY above: the shot connected, the health
+   bar did not move, and with nothing on screen to say why that is the oldest
+   complaint in the project wearing a new hat. */
+.dmg-num.protected {
+  color: #6fd3ff; font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+}
+
 /* Phone. The bar has to survive a 360px-tall landscape window, where the top
    strip is competing with a notch. */
 @media (pointer: coarse) {

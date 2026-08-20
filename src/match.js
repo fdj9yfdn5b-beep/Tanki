@@ -121,15 +121,27 @@ export class Match {
       this.events.push(ev);
     };
 
-    this.combat.onHit = (target, amount, source) => {
-      if (source && source !== target) {
+    this.combat.onHit = (target, amount, source, point, meta = {}) => {
+      // `amount` is the damage that LANDED. A shot eaten by spawn protection is
+      // 0 and must not buy an assist — assistMinDamage would reject it anyway,
+      // but the ledger should not be recording work that was never done.
+      if (source && source !== target && amount > 0) {
         target.damageFrom ??= new Map();
         const rec = target.damageFrom.get(source.netId) ?? { amount: 0, lastTick: 0 };
         rec.amount += amount;
         rec.lastTick = this.tick;
         target.damageFrom.set(source.netId, rec);
       }
-      this.events.push({ e: 'hit', id: target.netId, dmg: +amount.toFixed(1), by: source?.netId ?? null });
+      const ev = {
+        e: 'hit', id: target.netId, dmg: +amount.toFixed(1), by: source?.netId ?? null,
+      };
+      // The shot connected and the target was invulnerable. Flagged rather than
+      // left to be inferred from `dmg: 0`, because the client has to say
+      // something specific: a shot that lands for nothing with no explanation on
+      // screen is indistinguishable from the hit-registration bugs in §4, and
+      // there is no bug here — the rule is working.
+      if (meta.guarded) ev.sg = 1;
+      this.events.push(ev);
     };
   }
 

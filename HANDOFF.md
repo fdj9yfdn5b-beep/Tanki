@@ -264,6 +264,75 @@ but-same solves it, and the first attempt lightened by 0.42 toward white, which
 under this sun and tone mapping renders as a **white** tank — the same problem
 again. 0.22 keeps it red.
 
+## 4a. "I shoot a tank and it takes no health off", reported a fourth time
+
+Reported again after playtest 9 had it as settled. §8's ordered checklist was
+run first: `corpseblock`, `hitheight`, `edgehit` and `firerate` all pass, and
+hit registration is not the problem. Two things were, and one of them was a
+test.
+
+**The number on screen was the damage REQUESTED, not the damage DEALT.**
+`Combat._applyDamage` called `takeDamage(amount)` and then reported `amount` to
+`onHit`. Three things sit between the two, and every one of them was invisible:
+
+| | shooter was told | target lost |
+|---|---|---|
+| ordinary hit | 175 | 175 |
+| **spawn-protected target** | **175** | **0** |
+| SHIELD on the target | 175 | 96.2 |
+| target had 20 HP left | 175 | 20 |
+
+Measured over 9 minutes of bot combat: **the screen claimed 35,719 damage and
+31,831 landed — 89%.** 2.3% of all damage applications hit a spawn-protected
+tank, and bots understate that badly: bots wander, whereas a player chases the
+person they just killed, which is precisely who is protected. `takeDamage` now
+returns what it applied and that is what gets reported, so the floating number,
+the assist ledger and the DEV diagnostics all describe the same event.
+
+**Spawn protection is two full seconds of TOTAL immunity and had no tell of any
+kind** — not on the protected tank, not on the shooter's screen. Unloading into
+someone who just respawned did exactly nothing, with nothing anywhere saying
+why. That is indistinguishable from the three real bugs below and reads as a
+fourth. The protected tank is now drawn translucent and pulsing
+(`Tank.syncGuardVisual`, called from `update()` AND `interpolate()` — see the
+rule about visuals and remote tanks below, this is the fourth instance), and a
+shot that lands on one floats **PROTECTED** instead of a number.
+
+**`tools/shotsync.mjs` was crying wolf, and nearly sent this session hunting a
+bug that does not exist.** It reported 4-12 of 22 — a clear FAIL — on a build
+where the server was in fact seeding all 23 of 23 shots correctly. `TOL` was
+hard-coded at 0.02 with a comment deriving it as `0.001/σ`. That derivation was
+right when Twin's spread was ~0.05. **Playtest 4 cut every spread to roughly a
+third** (§4, and it is in the session log two entries later), so σ is 0.018 and
+the true wire-rounding bound is 0.056 — the tolerance had been 2.8x too tight
+ever since, rejecting correct matches at random and breaking the chain wherever
+it happened to land. `TOL` is derived from σ now.
+
+How it was settled, and the method is the reusable part: the server was made to
+log, per shot, the seq it keyed off, the gaussian that seq produces, its own aim
+and the direction it broadcast. Reconstructing the draw from that ground truth
+gave **worst error 0.035σ across all 23 shots against a quantisation floor of
+0.056σ** — the arithmetic is exact. Only then was the tool at fault rather than
+the game. Two traps hit on the way, both worth knowing: **each shotsync run
+gets a new client id**, so seeds from one run mean nothing in another (the
+`SEQS=` mode was fed the wrong run's numbers twice and reported a confident
+0/21); and its `SEQS=` mode lined those numbers up index-for-index while the
+tool DROPS shots taken while the tank is turning, so the two lists slid out of
+alignment at the first drop. Both are fixed.
+
+**A negative control that requires hand-editing the server is a control that
+stops being run.** `NO_SHOT_SEED=1` now puts the server back on its free-running
+RNG. Seeded: **21/21**. Unseeded: **3/22**. Both were run.
+
+**What is NOT explained.** The reporter plays the deployed build against server
+bots. Spawn protection and the damage-reporting lie are real and measured, but
+2.3% of hits is not obviously "many times" — so treat this as one cause found,
+not the case closed. The next step if it survives is to ask *when*: right after
+a kill (spawn protection), at range (Twin does 5 damage past 26m by design, and
+the number is on screen now), or at random (something still unfound).
+
+---
+
 **Engagement bands come from map geometry, not taste.** Ray-sampling 40k position
 pairs gave clear-line probability by range (69% at 0-10m down to 6% at 80-90m).
 The long band originally ran to 120m, so Rail bots parked at 80m where only 6% of
@@ -781,9 +850,12 @@ node tools/hitheight.mjs         # can every hull shoot every other hull? run af
 node tools/gamemode.mjs          # teams, friendly fire, match end, reset — every check
                                  # has a control, incl. that the SANDBOX default is unchanged
 node tools/matchlength.mjs 5     # how long a match actually runs. args: [matches] [target] [mode]
+node tools/nodamage.mjs          # is the number on screen the damage that landed?
 node tools/corpseblock.mjs       # do dead tanks block shots? (has a negative control)
 node tools/edgehit.mjs           # how far off-centre a shot still lands, vs the visible tank
 npm run tunnel                   # throwaway public link, verified before it is printed
+NO_SHOT_SEED=1 node server/index.mjs      # negative control for shotsync: 21/21
+                                 # seeded, 3/22 unseeded. Run BOTH or the pass means nothing.
 MODE=ffa node server/index.mjs   # the same server without sides
 TARGET=20 node server/index.mjs  # a short match, for testing the END of one — the
                                  # banner, the intermission and the reset are three
@@ -865,6 +937,13 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
     frame rate other than 60); rotation ramps roughly halved after "too much
     resistance", and the inertia scaling square-rooted so the heavy end is not
     disproportionately sluggish.
+27. **"Shots take no health off", fourth report.** Hit registration was clean;
+    the damage READOUT was not — the screen reported the damage requested, not
+    the damage dealt, so a spawn-protected target showed 175 and lost 0. Spawn
+    protection also had no visual tell at all. Both fixed, plus `nodamage.mjs`.
+    And `shotsync` was found to have been failing on correct builds since
+    playtest 4 cut the spreads — see §4a; it now has a one-env-var negative
+    control.
 26. **Game modes.** Teams, a score target, a match end, an intermission and a
     full reset — the thing §8 had been calling the biggest gap. Friendly fire
     off through one gate on the one damage path, with a FRIENDLY tell so a
@@ -889,9 +968,15 @@ and the seeding fix in §4 is defeated. The client bundle alone only needs
 
 ## 8. Start the next session by
 
-Playtest 9 confirmed these are **no longer reported**: shots not registering,
-the tank dancing/jumping, the snapback on stopping a turn, corner hits, and
-tank-on-tank shaking. Do not go hunting them again without a fresh report.
+Playtest 9 confirmed these are **no longer reported**: the tank
+dancing/jumping, the snapback on stopping a turn, corner hits, and tank-on-tank
+shaking. Do not go hunting them again without a fresh report.
+
+**"Shots take no health off" IS reported again** — see §4a. One cause found and
+fixed (the readout lied, and spawn protection was invisible); it is not
+established that this accounts for all of it. **Ask when it happens before
+touching anything**: right after a kill, at long range, or at random. The three
+answers point at three different places.
 
 1. **Ask what still feels wrong**, then measure before changing anything. Every
    single fix this session came from a measurement that contradicted a
@@ -901,9 +986,11 @@ tank-on-tank shaking. Do not go hunting them again without a fresh report.
    discontinuity of releasing a key; forcing an effect locally bypasses the
    exact network path that was broken).
 
-2. **Game modes.** This is the biggest thing still missing. Shots, hulls,
-   loadouts, pickups and hosting are all settled; there is still nothing to
-   *win*. Teams, a score target, a match end, a scoreboard that resets.
+2. **Game modes are DONE** — teams, target, match end, intermission, reset, in
+   both tdm and ffa. What is untested is how they FEEL with real people: nobody
+   has played a full match to a win yet, and the two numbers most likely to be
+   wrong are the score target (measured against bots, not humans) and the
+   12-second intermission.
 
 3. **The Wraith / Rail imbalance is still unexplained** (§4). It wins 87-89% on
    Rail. Two hypotheses were built and falsified. Per this project's own
@@ -919,9 +1006,15 @@ tank-on-tank shaking. Do not go hunting them again without a fresh report.
    Every test in `tools/` that matters now has one.
 
 5. **If hits ever fail again**, the order is: `tools/corpseblock.mjs`,
-   `tools/hitheight.mjs`, `tools/edgehit.mjs`, then `tools/shotsync.mjs`
-   against a live server. Damage numbers are on screen now, which separates
-   "hit for very little" (range falloff) from "no damage at all".
+   `tools/hitheight.mjs`, `tools/edgehit.mjs`, `tools/nodamage.mjs`, then
+   `tools/shotsync.mjs` against a live server. Damage numbers are on screen now
+   and they finally report what LANDED rather than what was requested (§4a),
+   which separates "hit for very little" (range falloff), "hit a protected
+   tank" (says PROTECTED), "hit a teammate" (says FRIENDLY) and "no damage at
+   all" — four different things that used to look identical.
+
+   And read §4a before believing `shotsync`: it spent this session reporting a
+   confident FAIL on a build that was provably correct.
 
 6. **If the visuals are too busy**, `config.FX` is one place and every count is
    in it — but read §4 first: three rounds of density tuning were spent on a bug
