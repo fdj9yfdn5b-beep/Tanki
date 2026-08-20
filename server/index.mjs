@@ -482,6 +482,33 @@ function sendSnapshots() {
   }
 }
 
+// ── Keep-alive ──────────────────────────────────────────────────────────────
+// Ping our own public URL so the host does not suspend us.
+//
+// Render's free tier suspends an idle instance, and it does NOT hold the next
+// request while it restarts — it answers immediately with a 404 and
+// `x-render-routing: no-server`. Measured: two 404s and then a 200, about 25
+// seconds apart. So a friend clicking the link does not wait through a slow
+// load, they get "Not Found" and reasonably conclude the game is down. The
+// client's own connect-retry cannot help, because it only exists once the page
+// has loaded.
+//
+// A request through the public hostname counts as inbound traffic and resets
+// the idle timer. Free instances get 750 hours a month against a ~730 hour
+// month, so one service staying up fits — but only one. Adding a second free
+// service on the same account would exceed the allowance.
+//
+// Silent no-op anywhere else: RENDER_EXTERNAL_URL only exists on Render.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  const KEEP_ALIVE_MIN = 10;   // comfortably inside Render's ~15 minute idle cut
+  console.log(`keep-alive: pinging ${SELF_URL}/healthz every ${KEEP_ALIVE_MIN}m`);
+  setInterval(() => {
+    fetch(`${SELF_URL}/healthz`, { signal: AbortSignal.timeout(20000) })
+      .catch((err) => console.log(`keep-alive ping failed: ${err.message}`));
+  }, KEEP_ALIVE_MIN * 60 * 1000).unref?.();
+}
+
 // ── Shutdown ────────────────────────────────────────────────────────────────
 // Platforms send SIGTERM on redeploy and SIGKILL some seconds later. Closing
 // sockets deliberately lets clients see a clean disconnect instead of hanging
