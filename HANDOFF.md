@@ -867,6 +867,10 @@ node tools/gamemode.mjs          # teams, friendly fire, match end, reset — ev
                                  # has a control, incl. that the SANDBOX default is unchanged
 node tools/matchlength.mjs 5     # how long a match actually runs. args: [matches] [target] [mode]
 node tools/nodamage.mjs          # is the number on screen the damage that landed?
+node tools/rangehit.mjs          # what a dead-centre shot is worth, by range, still vs moving.
+                                 # Its fixture PROVES itself: a lane is only accepted after a
+                                 # real rail shot has landed down it, so Rail-vs-stationary at
+                                 # 100% in every column is a control, not a result.
 node tools/corpseblock.mjs       # do dead tanks block shots? (has a negative control)
 node tools/edgehit.mjs           # how far off-centre a shot still lands, vs the visible tank
 npm run tunnel                   # throwaway public link, verified before it is printed
