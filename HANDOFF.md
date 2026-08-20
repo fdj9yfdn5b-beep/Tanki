@@ -340,12 +340,76 @@ alignment at the first drop. Both are fixed.
 stops being run.** `NO_SHOT_SEED=1` now puts the server back on its free-running
 RNG. Seeded: **21/21**. Unseeded: **3/22**. Both were run.
 
-**What is NOT explained.** The reporter plays the deployed build against server
-bots. Spawn protection and the damage-reporting lie are real and measured, but
-2.3% of hits is not obviously "many times" — so treat this as one cause found,
-not the case closed. The next step if it survives is to ask *when*: right after
-a kill (spawn protection), at range (Twin does 5 damage past 26m by design, and
-the number is on screen now), or at random (something still unfound).
+**Asked when it happens: "at range, not close, and at random with no pattern."**
+`tools/rangehit.mjs` aims DEAD CENTRE — what the game tells you to do, §5: flat
+trajectory, no reticle, the barrel is the reticle — at a hull crossing at top
+speed:
+
+```
+              10m      20m      30m      40m      50m      60m
+twin          93%       0%       0%       0%       0%       7%   hits
+thunder        1%       0%       0%       0%       0%       4%
+rail         100%     100%     100%      59%     100%     100%
+```
+
+Stationary, everything hits everywhere. Moving, the two PROJECTILE weapons hit
+essentially never, and Thunder misses even at 10m. Twin's shell does 50 m/s and
+Thunder's 35, so at 30m the flight takes 0.6s and 0.86s while the target covers
+8m and 11m — against a tank 2.8m wide. **And the bots lead their shots**
+(`bots.js`: `aim.addScaledVector(v, tof * skill)`); the player is given no tool
+for the interception and no hint that one is needed. This is the part of §5's
+"the barrel is the reticle" that was never true: exactly true for hitscan, less
+true every metre for a shell in flight. Left alone deliberately — it is a design
+decision, and §5's real objection was to a *ballistic arc* with a hidden range
+solver, which a lead marker is not.
+
+**Then the report was narrowed, and the real one is none of the above: "I SEE
+the shell hit the tank and no health comes off."** Not a miss — the round
+visibly strikes and nothing happens. That is one shot resolved against two
+different targets, and the game does it by construction:
+
+**LAG COMPENSATION ONLY WORKS FOR HITSCAN. Projectiles get none of it.** The
+server rewinds the world, calls `tryFire`, and restores. `_fireHitscan`
+*resolves* inside that rewound instant, so Rail is compensated correctly.
+`_fireProjectile` only *spawns* a shell — the world is then restored and the
+shell flies through PRESENT time, colliding against where tanks are NOW.
+
+Confirmed with the tool built for the question. `tools/lagcomp.mjs` takes a
+`WEAPON=` and its own header says flat retention means compensation is working,
+a collapse means it is not:
+
+| RTT | 0ms | 100ms | 200ms | 400ms |
+|---|---|---|---|---|
+| rail (hitscan) | 100% | 250% | 200% | 100% |
+| twin (projectile) | 100% | 64% | 60% | **40%** |
+
+Rail is flat and noisy; Twin collapses monotonically. **And `WEAPON` defaults to
+`twin`** — so §4's "lag compensation's isolated contribution is a weak signal"
+was measured on the one weapon class it cannot help. Re-read that entry in this
+light.
+
+The size of it follows from the delays. A client draws remote tanks
+`INTERP_DELAY` in the past, and the snapshot it is drawing already took `rtt/2`
+to arrive; the server spawns the shell `rtt/2` after the input was sent. So what
+the client saw the shell strike and what the server tested are separated by the
+target's motion over **`rtt + INTERP_DELAY`**:
+
+| rtt | separation at 13.3 m/s | vs a 2.81m tank |
+|---|---|---|
+| 0 | 1.33m | half a tank |
+| 100ms | 2.66m | a whole tank |
+| 200ms | 3.99m | a tank and a half |
+
+**At any real latency the gap exceeds the tank's own width, so a shell the
+client draws hitting dead centre is a clean miss on the server.** Rail is
+immune, which is exactly why the symptom comes and goes with no pattern the
+player can see — it depends on which weapon is in your hands.
+
+NOT FIXED. The honest fix is to resolve projectile-vs-tank collisions against
+the shooter's own delayed view rather than the present one — test shells against
+`history` rather than against the live world, the same information lag
+compensation already keeps for hitscan. Cheaper mitigations (faster shells, a
+shorter `INTERP_DELAY`) each trade away something real. See §8.
 
 ---
 
@@ -857,7 +921,11 @@ node tools/decompose.mjs         # where the residual imbalance lives
 node tools/hulltest.mjs          # hull winrates in same-weapon mirrors
 GENERATIONS=30 LAMBDA=14 DUELS=8 node tools/optimize.mjs   # sep-CMA-ES tuner
 node tools/nettest.mjs           # two headless clients vs the real server
-node tools/lagcomp.mjs           # lag compensation A/B (needs TANKI_DEV=1)
+node tools/lagcomp.mjs           # lag compensation A/B (needs TANKI_DEV=1).
+                                 # WEAPON=rail vs WEAPON=twin is the run that matters: it
+                                 # shows compensation working for hitscan and ABSENT for
+                                 # projectiles. Defaults to twin, which is why the old
+                                 # reading of this tool was so weak. See §4a.
 node tools/scores.mjs            # read the live scoreboard off the server
 node tools/spreadsync.mjs        # client/server shot agreement, pure arithmetic
 node tools/firerate.mjs          # shots drawn per shot fired (LAG_TICKS=9 to stress)
@@ -992,11 +1060,17 @@ Playtest 9 confirmed these are **no longer reported**: the tank
 dancing/jumping, the snapback on stopping a turn, corner hits, and tank-on-tank
 shaking. Do not go hunting them again without a fresh report.
 
-**"Shots take no health off" IS reported again** — see §4a. One cause found and
-fixed (the readout lied, and spawn protection was invisible); it is not
-established that this accounts for all of it. **Ask when it happens before
-touching anything**: right after a kill, at long range, or at random. The three
-answers point at three different places.
+**"I SEE the shell hit and no health comes off" — CAUSE FOUND, NOT YET FIXED.**
+§4a has it in full: **lag compensation only covers hitscan.** A projectile is
+merely spawned inside the rewind and then flies through present time, so the
+server tests it against a tank that has moved on by `rtt + INTERP_DELAY` —
+more than a tank's width at any real latency. Measured with `lagcomp.mjs`:
+Rail holds 100% of its hit rate to 400ms RTT, Twin falls to 40%.
+
+**This is the first thing to pick up.** The fix is to resolve
+projectile-vs-tank against `history` — the same record lag compensation already
+keeps for hitscan — instead of against the live world. Read §4a before starting;
+two cheaper mitigations are described there and both give something up.
 
 1. **Ask what still feels wrong**, then measure before changing anything. Every
    single fix this session came from a measurement that contradicted a
