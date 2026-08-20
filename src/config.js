@@ -288,8 +288,15 @@ export const TURN_BY_SPEED = { atRest: 1.25, atTopSpeed: 0.6 };
 // Spawns are fixed points on a ring, so anyone who knows the map can park a gun
 // on one; without this you die, wait, and die again to the same shot with no
 // move available to you. It ends EARLY the moment the protected tank fires —
-// otherwise it is not protection, it is two free seconds of shooting.
-export const SPAWN_PROTECTION = 2.0;
+// otherwise it is not protection, it is free seconds of shooting.
+//
+// 3.0, raised from 2.0 on the report that a respawn still does not give you
+// long enough to get off the spot. It is only usable time if you can act in it:
+// the slowest hull needs about a second to reach speed, so two seconds was
+// closer to one. This is also the window the shield below has to be READ in —
+// an invulnerability nobody notices is worse than none, because the shooter
+// concludes the game is broken. See §4a.
+export const SPAWN_PROTECTION = 3.0;
 
 // Scoring. An assist is credited to anyone who damaged the victim recently but
 // did not land the final blow — without it, focusing a target down as a team

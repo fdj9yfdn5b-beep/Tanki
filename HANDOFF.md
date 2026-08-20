@@ -289,14 +289,30 @@ person they just killed, which is precisely who is protected. `takeDamage` now
 returns what it applied and that is what gets reported, so the floating number,
 the assist ledger and the DEV diagnostics all describe the same event.
 
-**Spawn protection is two full seconds of TOTAL immunity and had no tell of any
+**Spawn protection is THREE seconds of TOTAL immunity and had no tell of any
 kind** — not on the protected tank, not on the shooter's screen. Unloading into
 someone who just respawned did exactly nothing, with nothing anywhere saying
 why. That is indistinguishable from the three real bugs below and reads as a
-fourth. The protected tank is now drawn translucent and pulsing
-(`Tank.syncGuardVisual`, called from `update()` AND `interpolate()` — see the
-rule about visuals and remote tanks below, this is the fourth instance), and a
-shot that lands on one floats **PROTECTED** instead of a number.
+fourth.
+
+The protected tank now carries a **visible bubble** — a soft additive skin plus
+a wireframe shell, in the same blue as the SHIELD pickup — that shrinks and
+flickers faster as it runs out. Translucency on the hull was the first attempt
+and it was not enough: this arena already fades hulls for camera occlusion, so
+"that tank looks see-through" is an overloaded signal, and at 60m a slightly
+transparent tank is just a tank. A bubble is a shape not otherwise in the game.
+It uses `depthWrite: false` and `depthTest: true`, per §5's rule that has now
+gone wrong three times. `Tank.syncGuardVisual` is called from `update()` AND
+from `interpolate()` — fourth instance of the remote-tank rule below; the tank
+whose invulnerability you need to see is by definition not your own.
+
+A shot that lands on a protected tank floats **PROTECTED** instead of a number.
+
+Raised 2.0 → 3.0 on the report that a respawn does not buy enough time to get
+off the spot: the slowest hull needs about a second to reach speed, so two
+seconds was closer to one. No balance cost — duels stage `spawnGuard = 0` and
+end on a kill, so `report.mjs` is bit-identical at LOSS 0.4403, and measured
+match length is unchanged (median 174s either way).
 
 **`tools/shotsync.mjs` was crying wolf, and nearly sent this session hunting a
 bug that does not exist.** It reported 4-12 of 22 — a clear FAIL — on a build

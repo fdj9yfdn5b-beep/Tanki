@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HULLS, WEAPONS, TURN_BY_SPEED, DROP_KINDS, TEAMS } from './config.js';
+import { HULLS, WEAPONS, TURN_BY_SPEED, DROP_KINDS, TEAMS, SPAWN_PROTECTION } from './config.js';
 import { metalTexture, treadTexture } from './textures.js';
 
 // One tank. Player and bot go through the same `update(dt, input)` path —
@@ -19,6 +19,10 @@ const UP = new THREE.Vector3(0, 1, 0);
 // 3.5° per frame, roughly a metre of aim error at 40m, with nothing in between.
 // Module-level so the charge tell is not allocating a Color every frame.
 const WHITE = new THREE.Color(0xffffff);
+// Same blue as the SHIELD pickup in config.DROP_KINDS. Both mean "damage is
+// not landing on this tank", and teaching one colour twice is cheaper than
+// teaching two colours once.
+const SHIELD_COLOR = 0x6fd3ff;
 
 // Anti-grav. Stiff enough to hold a steady ride height over the arena's steps,
 // damped just under critical so it settles rather than bobbing. The probe stops
@@ -301,7 +305,50 @@ export class Tank {
     this.turret.add(accent);
     this.accent = accent;
 
+    this._buildShield();
     this._buildNameplate();
+  }
+
+  /**
+   * The spawn-protection bubble.
+   *
+   * A real object around the tank, not just a fade on its hull. Translucency
+   * alone was the first attempt and it is not enough: this arena already fades
+   * hulls for camera occlusion, so "that tank looks see-through" is an
+   * overloaded signal, and at 60m a slightly-transparent tank is just a tank.
+   * A bubble is a shape that is not otherwise in the game, so it needs no
+   * learning — and it reads at any range, which is the whole job.
+   *
+   * Two shells: a soft skin for volume and a wireframe for structure, both
+   * additive so they glow rather than dim what is behind them. `depthWrite`
+   * off, `depthTest` ON — the world must still occlude it, which is the trap
+   * §5 records three times (nameplates, then the drive ghost).
+   */
+  _buildShield() {
+    const [w, h, d] = this.hull.size;
+    const r = Math.max(w, d) * 0.78;
+    this.shield = new THREE.Group();
+
+    const skin = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 20, 14),
+      new THREE.MeshBasicMaterial({
+        color: SHIELD_COLOR, transparent: true, opacity: 0.16,
+        depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      }));
+    const frame = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(r * 0.99, 1),
+      new THREE.MeshBasicMaterial({
+        color: SHIELD_COLOR, transparent: true, opacity: 0.42,
+        depthWrite: false, wireframe: true,
+        blending: THREE.AdditiveBlending,
+      }));
+    this.shield.add(skin, frame);
+    this.shield.position.y = h * 0.35;
+    this.shield.visible = false;
+    this.shieldSkin = skin;
+    this.shieldFrame = frame;
+    this.root.add(this.shield);
   }
 
   // Barrel geometry hangs off the rig's muzzle nodes, so switching weapon
@@ -939,19 +986,22 @@ export class Tank {
    * saw. The one tank that must show this is somebody ELSE's.
    */
   syncGuardVisual() {
-    const mats = this.teamMats;
-    if (!mats) return;
+    if (!this.shield) return;
     const guarded = this.alive && this.spawnGuard > 0;
-    if (!guarded && !this._wasGuarded) return;      // nothing to do, the common case
-    this._wasGuarded = guarded;
-    // A slow pulse rather than a constant fade, so it cannot be mistaken for
-    // the camera's occlusion fade, which is also translucency on a hull.
-    const pulse = guarded ? 0.34 + 0.16 * Math.sin(this.spawnGuard * 11) : 1;
-    for (const m of mats) {
-      m.transparent = guarded;
-      m.opacity = pulse;
-      m.depthWrite = !guarded;
-    }
+    this.shield.visible = guarded;
+    if (!guarded) return;
+
+    // Shrink and brighten as it runs out, so the last second LOOKS like a last
+    // second. A bubble that vanishes at full size gives the shooter no warning
+    // and the protected player no cue to start moving.
+    const left = Math.min(1, this.spawnGuard / SPAWN_PROTECTION);
+    const ending = 1 - left;
+    this.shield.scale.setScalar(0.82 + left * 0.18);
+    // Flicker faster as it dies. Tied to spawnGuard rather than to a clock, so
+    // it is identical on every machine watching the same tank.
+    const flicker = 0.5 + 0.5 * Math.sin(this.spawnGuard * (7 + ending * 22));
+    this.shieldSkin.material.opacity = 0.10 + 0.10 * flicker;
+    this.shieldFrame.material.opacity = 0.26 + 0.26 * flicker;
   }
 
   faceCamera(camera) {
