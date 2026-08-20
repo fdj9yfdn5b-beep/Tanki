@@ -360,9 +360,20 @@ body.touch #help { display: none; }
 .stat b { font-size: 21px; line-height: 1; }
 
 /* ── Scoreboard ───────────────────────────────────────────────────────────── */
-#scoreboard {
+/* The right rail: scoreboard on top, kill feed under it. Both used to be
+   pinned to the viewport independently, which worked only while the board was
+   a fixed six rows — adding a header row per team pushed it straight through
+   the feed. A column cannot overlap itself. */
+#right-rail {
   position: fixed;
   top: 18px; right: 24px;
+  z-index: 30;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  pointer-events: none;
+  max-height: calc(100vh - 130px);
+}
+
+#scoreboard {
   min-width: 250px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -399,8 +410,6 @@ body.touch #help { display: none; }
 
 /* ── Kill feed ────────────────────────────────────────────────────────────── */
 #feed {
-  position: fixed;
-  top: 130px; right: 24px;
   display: flex; flex-direction: column; gap: 4px;
   align-items: flex-end;
   pointer-events: none;
@@ -559,3 +568,162 @@ body.touch #help { display: none; }
 }
 .buff.expiring { animation: buff-flash 0.5s steps(2, end) infinite; }
 @keyframes buff-flash { 50% { opacity: 0.45; } }
+
+/* ── The match ───────────────────────────────────────────────────────────────
+   Top centre, which is the one edge of the screen nothing else uses. Both
+   scores, the clock and the target sit here permanently rather than behind a
+   held key: a score you have to ask for cannot change whether you push or hold,
+   and that decision is the entire point of having a target to play for. */
+#matchbar {
+  position: fixed;
+  top: 14px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex; align-items: stretch; gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(6px);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+#matchbar[hidden] { display: none; }
+
+.mb-side {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 14px;
+  font-size: 19px; font-weight: 700; line-height: 1;
+  color: var(--muted);
+}
+.mb-side b { font-size: 21px; color: currentColor; }
+.mb-name { font-size: 10px; letter-spacing: 0.2em; font-weight: 700; }
+
+/* Your own side, lit. Knowing the score is useless without knowing which of the
+   two numbers is yours, and a colour you were told once on joining is not
+   something anyone carries through a firefight. */
+.mb-side.mine { background: rgba(255, 255, 255, 0.06); }
+.mb-side.mine .mb-name::after {
+  content: ' ▸ YOU';
+  opacity: 0.75; font-size: 9px; letter-spacing: 0.14em;
+}
+
+.mb-mid {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px;
+  padding: 5px 16px;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  min-width: 104px;
+}
+.mb-mid b { font-size: 17px; font-weight: 700; line-height: 1; }
+#mb-target { font-size: 9px; letter-spacing: 0.16em; color: var(--muted); white-space: nowrap; }
+/* Last thirty seconds. */
+.mb-mid.urgent b { color: #ff5f4d; }
+
+/* ── Result ──────────────────────────────────────────────────────────────────
+   Deliberately not a full-screen takeover: the arena stays visible behind it,
+   because tanks can still drive during the intermission and a black screen
+   would read as a disconnect. */
+#matchend {
+  position: fixed;
+  left: 50%; top: 30%;
+  transform: translate(-50%, -50%);
+  z-index: 45;
+  text-align: center;
+  padding: 20px 46px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(13, 17, 23, 0.9);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  animation: me-in 0.35s ease-out;
+}
+#matchend[hidden] { display: none; }
+.me-title {
+  font-size: 30px; font-weight: 800; letter-spacing: 0.16em; line-height: 1;
+}
+.me-score {
+  margin-top: 10px;
+  font-size: 20px; font-weight: 700; letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.me-next {
+  margin-top: 12px;
+  font-size: 10px; letter-spacing: 0.2em; color: var(--muted);
+}
+@keyframes me-in {
+  from { opacity: 0; transform: translate(-50%, -58%); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+/* Scoreboard, grouped by side. The header row carries the team's own total, so
+   the board answers "are we winning" as well as "who is doing the work". */
+#scoreboard tr.team-head td {
+  padding-top: 9px;
+  font-size: 9px; letter-spacing: 0.2em; font-weight: 700;
+  border-bottom: 1px solid var(--line);
+}
+#scoreboard tr.team-head:first-child td { padding-top: 0; }
+#scoreboard tr.team-head td.sc { font-size: 12px; }
+
+/* A shot that hit a teammate. It reads as a miss otherwise — and "I shoot a
+   tank and it takes no health off" is the single most-reported complaint in
+   this project's history, with three separate real causes behind it. Turning
+   friendly fire off manufactures a fourth one unless the shot says so. */
+.dmg-num.friendly {
+  color: #9aa4b2; font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+}
+
+/* Phone. The bar has to survive a 360px-tall landscape window, where the top
+   strip is competing with a notch. */
+@media (pointer: coarse) {
+  #matchbar { top: calc(6px + env(safe-area-inset-top)); }
+  .mb-side { padding: 4px 9px; font-size: 14px; gap: 6px; }
+  .mb-side b { font-size: 15px; }
+  .mb-name { font-size: 8px; letter-spacing: 0.12em; }
+  .mb-side.mine .mb-name::after { content: ' ▸'; }
+  .mb-mid { padding: 3px 10px; min-width: 74px; }
+  .mb-mid b { font-size: 13px; }
+  #mb-target { font-size: 8px; letter-spacing: 0.1em; }
+  #matchend { padding: 12px 26px; top: 34%; }
+  .me-title { font-size: 19px; }
+  .me-score { font-size: 14px; margin-top: 6px; }
+  .me-next { font-size: 9px; margin-top: 7px; }
+}
+
+/* The control hints share the top strip with the match bar, which is centred
+   and about 250px wide. At 800px the line ran straight under it and the last
+   few hints were unreadable. Wrapping is the right answer rather than moving
+   either one: the bar is fixed-size and belongs in the middle, and the hints
+   are the thing that can take two lines without hurting. */
+/* Measured, not guessed: the bar renders ~340px wide with two-digit scores and
+   sits centred, so its left edge is 50vw - 170px. 230 leaves room for the
+   three-digit case and a real gutter. The first attempt used 150 and still
+   overlapped by 44px — on a 1280 window, which is not an unusual one. */
+#help { max-width: calc(50vw - 230px); min-width: 150px; }
+
+/* Phone. Three things have to give way, and the reason is the same for each:
+   at 740x360 the right-hand side of the screen is the aim stick and the FIRE
+   button, and anything sitting on top of them costs a shot.
+
+   - the control hints are for keys that do not exist there
+   - the per-player scoreboard grew a header row per team and now runs straight
+     through the FIRE button. Its job — are we winning — is done better by the
+     match bar, which is two numbers at the top and always visible
+   - the perf overlay is toggled with P, and a phone has no P. It was therefore
+     permanently on, over the game, with no way to turn it off.
+
+   The kill feed survives and moves to the left, where nothing is competing. */
+@media (pointer: coarse) {
+  #help { display: none; }
+  #scoreboard { display: none; }
+  #perf { display: none; }
+  #right-rail {
+    top: calc(6px + env(safe-area-inset-top));
+    right: auto;
+    left: calc(10px + env(safe-area-inset-left));
+    align-items: flex-start;
+    max-width: 32vw;
+  }
+  #feed { align-items: flex-start; font-size: 10px; }
+}

@@ -143,9 +143,20 @@ export class NetClient {
     // the board sat at zero while the server happily tallied away.
     for (const s of snap.tanks) {
       const tank = this.match.tanks.get(s.id);
-      if (!tank || s.k === undefined) continue;
-      tank.kills = s.k; tank.assists = s.as; tank.deaths = s.de; tank.score = s.sc;
+      if (!tank) continue;
+      if (s.k !== undefined) {
+        tank.kills = s.k; tank.assists = s.as; tank.deaths = s.de; tank.score = s.sc;
+      }
+      // Sides, applied to EVERY tank including our own — interpolate() skips
+      // our tank by design and applyTankState only runs on it, so neither of
+      // them alone covers the whole arena. Same reason the counters are here.
+      if (s.tm !== undefined && s.tm !== tank.team) tank.setTeam(s.tm);
     }
+
+    // The match: phase, clock, both scores, the winner. Adopted wholesale
+    // rather than predicted — see Match._stepGame for why nothing here is run
+    // locally.
+    this.match.applyGameState(snap.game);
 
     // Crates are server-owned state. Take the newest list wholesale rather than
     // interpolating: they fall on a fixed path and then sit still, so there is

@@ -28,6 +28,11 @@ export class Combat {
     this.tanks = [];
     this.onKill = null;
     this.onHit = null;
+    // Set by Match. Answers "is this damage allowed to land at all" — friendly
+    // fire, and a match that has already been won. Null means everything is
+    // fair game, which is what the balance harness wants.
+    this.canDamage = null;
+    this.onBlocked = null;
     // Telemetry ring buffer. This grew unbounded — one entry per shot, forever.
     // Harmless in a 60s test, a steady leak in a match that runs for an hour,
     // and the kind of thing that only shows up once the game is worth playing
@@ -284,6 +289,21 @@ export class Combat {
   }
 
   _applyDamage(target, amount, source, point) {
+    // The one gate, on the one path every weapon's damage goes through. It
+    // deliberately returns before `onHit` as well as before `takeDamage`: a
+    // blocked shot must not float a damage number, must not enter the assist
+    // ledger, and must not make its "attacker" the target's threat — a bot that
+    // registered a teammate as a threat would turn and fight it.
+    if (this.canDamage && !this.canDamage(target, source)) {
+      // Say something. A blocked shot is visually identical to a miss, and
+      // "I shoot a tank and it takes no health off" is the most-reported
+      // complaint in this project — three separate real bugs deep. Friendly
+      // fire would quietly manufacture a fourth report of it unless the shot
+      // that hit a teammate announces itself as one.
+      this.onBlocked?.(target, source, point);
+      return;
+    }
+
     // POWER scales what the shooter deals; SHIELD scales what the target takes
     // (inside takeDamage). Both are multipliers on the tuned numbers rather
     // than flat additions, so the weapon's shape at range survives.

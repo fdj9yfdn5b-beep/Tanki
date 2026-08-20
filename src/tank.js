@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HULLS, WEAPONS, TURN_BY_SPEED, DROP_KINDS } from './config.js';
+import { HULLS, WEAPONS, TURN_BY_SPEED, DROP_KINDS, TEAMS } from './config.js';
 import { metalTexture, treadTexture } from './textures.js';
 
 // One tank. Player and bot go through the same `update(dt, input)` path —
@@ -105,6 +105,7 @@ export class Tank {
     this.turnVel = 0;
     this.spawnGuard = 0;     // seconds of post-respawn invulnerability left
     this.effects = new Map();  // drop kind -> seconds remaining
+    this.team = null;        // 'red' | 'blue' | null in a mode without sides
 
     this._buildBody();
     this._buildRig();
@@ -206,6 +207,9 @@ export class Tank {
       map: metalTexture('#ffffff'), color: this.color,
       roughness: 0.55, metalness: 0.45,
     });
+    // Chassis, glacis and turret share this one material, so recolouring the
+    // tank for its team is a single assignment rather than a walk of the rig.
+    this.teamMats = [bodyMat];
     const darkMat = new THREE.MeshStandardMaterial({
       color: 0x24272c, roughness: 0.8, metalness: 0.3,
     });
@@ -253,6 +257,7 @@ export class Tank {
           }));
         emitter.position.set(side * w * 0.40, -h * 0.42, 0);
         this.root.add(emitter);
+        this.teamMats.push(emitter.material);
       }
     } else {
       for (const side of [-1, 1]) {
@@ -350,6 +355,47 @@ export class Tank {
     this.hpBar.renderOrder = 999;
     this.hpBar.visible = !this.isPlayer;
     this.root.add(this.hpBar);
+  }
+
+  /**
+   * Put this tank on a side, and make that unmistakable on sight.
+   *
+   * Telling friend from foe in a quarter of a second is the whole ask of a team
+   * game — a hull silhouette is not enough, because both sides field the same
+   * three hulls. So the team colour replaces the hull colour outright rather
+   * than being added as a stripe somewhere.
+   *
+   * Your OWN tank keeps the same colour, lightened. It used to be cyan
+   * regardless of hull so you could find yourself in a fight, and that reason
+   * is still good — but a cyan tank in a red-vs-blue arena is a third faction
+   * to everyone else's eye, and you would be the one player who cannot see
+   * which side they are on. Lighter-but-same reads as "me" without reading as
+   * "neither".
+   *
+   * Safe with no renderer: headless tanks have no materials to colour, and the
+   * balance harness runs the mode without sides anyway.
+   */
+  setTeam(team) {
+    this.team = team ?? null;
+    const spec = this.team ? TEAMS[this.team] : null;
+    if (!spec) return;      // no sides: keep the hull (or player) colour
+
+    const col = new THREE.Color(spec.color);
+    // 0.22, not more. The first attempt lightened by 0.42 and the result read
+    // as a WHITE tank — on screen, under this sun and tone mapping, that is a
+    // third colour in a two-colour game, and the one player who could not tell
+    // which side they were on was you.
+    if (this.isPlayer) col.lerp(WHITE, 0.22);
+    this.color = col.getHex();
+
+    for (const m of this.teamMats ?? []) {
+      m.color.copy(col);
+      m.emissive?.copy(col);
+    }
+    // The plate is white text on transparent canvas, so this tints the letters.
+    // Lightened well past the hull colour: a name is small and has to stay
+    // legible at 80m against whatever is behind it.
+    this.plate?.material.color.copy(col.clone().lerp(WHITE, 0.5));
   }
 
   // ── State ─────────────────────────────────────────────────────────────────

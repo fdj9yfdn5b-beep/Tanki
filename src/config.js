@@ -390,3 +390,74 @@ export const DROP_KINDS = {
     turnRate: 1.25,
   },
 };
+
+// ── Teams and game modes ────────────────────────────────────────────────────
+// Until now this was a sandbox: you could kill and be killed forever and there
+// was nothing to win. A mode is three things — sides, a target, and an end —
+// and the end is the part that makes the other two mean anything.
+//
+// Both modes live in the same code path. The only thing `teams: false` changes
+// is who counts as an enemy and whose score the target is measured against, so
+// there is no second implementation to keep in step with the first.
+export const TEAMS = {
+  red: { name: 'RED', color: 0xff5f4d, css: '#ff5f4d' },
+  blue: { name: 'BLUE', color: 0x3f9dff, css: '#3f9dff' },
+};
+export const TEAM_KEYS = Object.keys(TEAMS);
+
+export const MODES = {
+  // No sides, no target, no end — the original sandbox, and the DEFAULT for a
+  // bare `new Match()`. Every tool in tools/ stages its own fights and runs
+  // them for a fixed time; if the default had an end, a long balance run would
+  // quietly cross the time limit, stop resolving damage and report a table of
+  // numbers measured on a match that was already over. §4 has a whole entry
+  // on what a wrong constant costs when it fails silently, and this is the same
+  // shape. The game asks for a real mode explicitly; the harness never has to.
+  sandbox: {
+    key: 'sandbox',
+    name: 'SANDBOX',
+    teams: false,
+    scoreTarget: Number.MAX_SAFE_INTEGER,
+    timeLimit: Number.MAX_SAFE_INTEGER,
+  },
+  tdm: {
+    key: 'tdm',
+    name: 'TEAM DEATHMATCH',
+    teams: true,
+    // Points, not kills, so an assist moves the team's number — the scoreboard
+    // has always paid 5 for an assist and it would be strange for the thing
+    // that decides the match to be the one place that does not count them.
+    //
+    // 100 is MEASURED, not picked: `tools/matchlength.mjs` runs full bot
+    // matches and reports mean 184s, median 174s, range 119-293s over four —
+    // about three minutes, which is a match you can finish on a break. The
+    // scores came in at 95-105, 100-80, 105-70 and 85-100, so a target this
+    // size is also close enough to be worth chasing at the end.
+    scoreTarget: 100,
+    // Never reached in any measured bot match. It is not the pacing dial — it
+    // is the guard against two players who cannot find each other, which on a
+    // 120m map with this much cover is a real state.
+    timeLimit: 420,
+  },
+  ffa: {
+    key: 'ffa',
+    name: 'FREE FOR ALL',
+    teams: false,
+    // Lower than TDM's, because one player has to reach it alone rather than a
+    // side pooling three players' work — but not half of it: measured, FFA
+    // produces nearly twice the kills per minute (10.3 vs 5.6) because
+    // everyone is a target. 60 ran 113s, which is short enough to feel like it
+    // ended before it started; 80 runs 156s and sits alongside TDM's 184s.
+    scoreTarget: 80,
+    timeLimit: 420,
+  },
+};
+
+// What `new Match()` gets when nobody says otherwise: the endless sandbox.
+export const DEFAULT_MODE = 'sandbox';
+// What the actual GAME runs — server and offline play both ask for this.
+export const GAME_MODE = 'tdm';
+
+// Seconds between the winner being decided and the next match starting. Long
+// enough to read the final board, short enough that nobody alt-tabs.
+export const INTERMISSION = 12;

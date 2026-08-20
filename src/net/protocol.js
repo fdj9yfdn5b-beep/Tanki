@@ -32,9 +32,21 @@ export const C_DEV_PLACE = 'dev_place';   // { x, z, yaw, turret }
 export const C_DEV_AIM = 'dev_aim';       // { turret }
 
 // ── Server → client ─────────────────────────────────────────────────────────
-export const S_WELCOME = 'w';         // { id, tick, players, arenaSeed }
-export const S_SNAPSHOT = 's';        // { tick, ack, tanks, events }
-export const S_JOIN = 'j';            // { id, name, hull, weapon, color }
+export const S_WELCOME = 'w';         // { id, tick, mode, players }
+export const S_SNAPSHOT = 's';        // { tick, ack, tanks, drops, game, events }
+export const S_JOIN = 'j';            // { id, name, hull, weapon, team }
+
+// Which side you are on is decided by the SERVER and travels three ways: in the
+// welcome roster, in each join, and again on every tank in every snapshot. That
+// looks redundant and is not — the first two are how a client learns about a
+// tank at all, and the third is what makes a client that joined mid-match, or
+// missed a message, correct anyway. Getting this wrong does not degrade
+// gracefully: a client with the wrong idea of who is on which side spends the
+// match shooting at friends and holding fire on enemies.
+//
+// The match itself (phase, clock, both scores, winner) rides in the snapshot's
+// `game` field, whole, every time. It is a handful of bytes and sending it
+// whole means there is no such thing as a client that missed the transition.
 export const S_LEAVE = 'x';           // { id }
 export const S_PING = 'p';            // { ts }
 

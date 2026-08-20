@@ -10,7 +10,7 @@ import { Fx } from './fx.js';
 import { Match } from './match.js';
 import { NetClient } from './net/client.js';
 import { BotBrain } from './bots.js';
-import { WEAPONS, HULLS, DROP_KINDS } from './config.js';
+import { WEAPONS, HULLS, DROP_KINDS, TEAMS, TEAM_KEYS, GAME_MODE, INTERMISSION } from './config.js';
 import { chooseLoadout } from './loadout.js';
 import { createTouchControls, isTouchDevice } from './touch.js';
 
@@ -111,7 +111,10 @@ const SERVER_URL = new URLSearchParams(location.search).get('server') || (() => 
   return `${secure ? 'wss' : 'ws'}://${location.host}/ws`;
 })();
 
-const match = new Match({ RAPIER, scene });
+// The real game mode, not the endless sandbox `Match` defaults to. Online this
+// is corrected from the welcome message the moment the server says what it is
+// running, so a client is never the one deciding the rules.
+const match = new Match({ RAPIER, scene, mode: GAME_MODE });
 const world = match.world;
 const combat = match.combat;
 const spawns = match.spawns;
@@ -235,6 +238,10 @@ function startOnline(lo, status) {
     loadout: lo,
 
     onWelcome: (msg) => {
+      // The server owns the rules. Set the mode BEFORE building any tank:
+      // addTank assigns a side when it is not given one, and a client guessing
+      // at that would put people on different teams from everyone else.
+      if (msg.mode) match.setMode(msg.mode);
       // Our own tank, plus everyone already in the match.
       for (const p of msg.players) {
         const isMe = p.id === msg.id;
@@ -242,22 +249,27 @@ function startOnline(lo, status) {
           id: p.id, hull: p.hull, weapon: p.weapon,
           name: isMe ? 'You' : p.name,
           color: isMe ? 0x4cc9f0 : HULLS[p.hull].color,
-          isPlayer: isMe,
+          isPlayer: isMe, team: p.team ?? null,
         });
         if (isMe) player = tank;
       }
       if (!player) player = addLocalPlayer(msg.id, lo);
       updateWeaponHud();
       feed(`connected — ${msg.players.length} in match`, '#7ee787');
+      // Which side you are on is the first thing you need and the one thing
+      // nothing else on screen states outright until the first tank drives past.
+      if (player.team) {
+        feed(`you are on ${TEAMS[player.team].name}`, TEAMS[player.team].css);
+      }
     },
 
     onJoin: (msg) => {
       if (match.tanks.has(msg.id)) return;
       match.addTank({
         id: msg.id, hull: msg.hull, weapon: msg.weapon,
-        name: msg.name, color: HULLS[msg.hull].color,
+        name: msg.name, color: HULLS[msg.hull].color, team: msg.team ?? null,
       });
-      feed(`${msg.name} joined`, '#7ee787');
+      feed(`${msg.name} joined`, msg.team ? TEAMS[msg.team].css : '#7ee787');
     },
 
     onLeave: (msg) => {
@@ -304,6 +316,13 @@ function startOnline(lo, status) {
         // What it DOES draw is the number, which is the part that was missing:
         // how much the shot was worth.
         if (e.by === net.id && who !== player) showDamage(who, e.dmg);
+      } else if (e.e === 'ff') {
+        // Your shot landed on a teammate. Drawn where the damage number would
+        // have been, because "nothing appeared" is exactly what a miss looks
+        // like — see the note in Combat._applyDamage.
+        if (e.by === net.id) showDamage(match.tanks.get(e.id), 0, 'friendly');
+      } else if (e.e === 'over' || e.e === 'start') {
+        announceMatch(e);
       } else if (e.e === 'pickup') {
         const spec = DROP_KINDS[e.kind];
         const taker = match.tanks.get(e.by);
@@ -511,18 +530,129 @@ function updateBuffs() {
  */
 const _dmgProject = new THREE.Vector3();
 
-function showDamage(target, amount) {
+function showDamage(target, amount, variant = null) {
   if (!hud.damage || !target) return;
   _dmgProject.copy(target.position).setY(target.position.y + 2.2).project(camera);
   if (_dmgProject.z > 1) return;              // behind the camera
   const el = document.createElement('div');
   el.className = 'dmg-num'
-    + (amount < 12 ? ' weak' : amount >= 60 ? ' big' : '');
-  el.textContent = Math.round(amount);
+    + (variant ? ` ${variant}` : amount < 12 ? ' weak' : amount >= 60 ? ' big' : '');
+  el.textContent = variant === 'friendly' ? 'FRIENDLY' : Math.round(amount);
   el.style.left = `${(_dmgProject.x * 0.5 + 0.5) * innerWidth}px`;
   el.style.top = `${(-_dmgProject.y * 0.5 + 0.5) * innerHeight}px`;
   hud.damage.appendChild(el);
   setTimeout(() => el.remove(), 800);
+}
+
+// ── The match ───────────────────────────────────────────────────────────────
+// Score, clock, target and result. Everything here is READ from `match`, which
+// online is written only by the snapshot and offline by the local simulation —
+// so there is one source of truth and the HUD cannot invent a score of its own.
+const mb = {
+  wrap: document.getElementById('matchbar'),
+  red: document.getElementById('mb-red'),
+  blue: document.getElementById('mb-blue'),
+  redScore: document.getElementById('mb-red-score'),
+  blueScore: document.getElementById('mb-blue-score'),
+  mid: document.querySelector('.mb-mid'),
+  clock: document.getElementById('mb-clock'),
+  target: document.getElementById('mb-target'),
+  end: document.getElementById('matchend'),
+  endTitle: document.getElementById('me-title'),
+  endScore: document.getElementById('me-score'),
+  endNext: document.getElementById('me-next'),
+};
+
+const clockText = (secs) => {
+  const t = Math.max(0, Math.ceil(secs));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
+
+/**
+ * Seconds left in the current phase.
+ *
+ * Online this is the server's number, refreshed 20 times a second and never
+ * advanced locally between snapshots. A clock displays whole seconds, so 20Hz
+ * is fifteen times more resolution than it can show — and a locally ticked one
+ * would drift away from the server's within a minute and have to snap back.
+ */
+const matchTimeLeft = () => (ONLINE ? (match.serverTimeLeft ?? 0) : match.timeLeft);
+
+function updateMatchHud() {
+  const mode = match.mode;
+  if (!mode || mode.key === 'sandbox') { mb.wrap.hidden = true; mb.end.hidden = true; return; }
+  mb.wrap.hidden = false;
+
+  const over = match.phase === 'over';
+  const left = matchTimeLeft();
+  mb.clock.textContent = clockText(left);
+  mb.mid.classList.toggle('urgent', !over && left <= 30);
+
+  if (mode.teams) {
+    mb.red.querySelector('.mb-name').textContent = TEAMS.red.name;
+    mb.blue.querySelector('.mb-name').textContent = TEAMS.blue.name;
+    mb.red.style.color = TEAMS.red.css;
+    mb.blue.style.color = TEAMS.blue.css;
+    mb.redScore.textContent = match.teamScore.red;
+    mb.blueScore.textContent = match.teamScore.blue;
+    mb.red.classList.toggle('mine', player?.team === 'red');
+    mb.blue.classList.toggle('mine', player?.team === 'blue');
+  } else {
+    // Same three slots, different question: in a mode with no sides the two
+    // numbers worth showing are the leader's and yours.
+    let lead = 0;
+    for (const t of match.tanks.values()) lead = Math.max(lead, t.score ?? 0);
+    mb.red.querySelector('.mb-name').textContent = 'LEAD';
+    mb.blue.querySelector('.mb-name').textContent = 'YOU';
+    mb.red.style.color = '';
+    mb.blue.style.color = 'var(--accent)';
+    mb.redScore.textContent = lead;
+    mb.blueScore.textContent = player?.score ?? 0;
+    mb.red.classList.remove('mine');
+    mb.blue.classList.add('mine');
+  }
+  mb.target.textContent = over ? 'MATCH OVER' : `FIRST TO ${match.scoreTarget}`;
+
+  if (!over) { mb.end.hidden = true; return; }
+  mb.end.hidden = false;
+  mb.endNext.textContent = `NEXT MATCH IN ${Math.max(0, Math.ceil(left))}`;
+}
+
+/**
+ * A match ended, or a new one began.
+ *
+ * The banner's text is set here, from the EVENT, rather than in the per-frame
+ * update: the event names the winner at the moment it was decided, and it is
+ * also the only place that can tell "you won" apart from "your side's number is
+ * higher", which is the difference between a result and a readout.
+ */
+function announceMatch(e) {
+  if (e.e === 'start') {
+    mb.end.hidden = true;
+    feed(`match started — first to ${match.scoreTarget}`, '#7ee787');
+    return;
+  }
+
+  const mine = match.mode.teams ? player?.team : player?.netId;
+  const won = e.win != null && e.win === mine;
+  let title = 'DRAW';
+  if (e.win != null) {
+    if (match.mode.teams) title = `${TEAMS[e.win]?.name ?? '?'} WINS`;
+    else if (won) title = 'YOU WIN';
+    else title = `${match.tanks.get(e.win)?.name ?? '?'} WINS`;
+  }
+  mb.endTitle.textContent = title;
+  mb.endTitle.style.color = e.win == null ? 'var(--text)'
+    : match.mode.teams ? TEAMS[e.win].css
+    : won ? '#4ade80' : 'var(--text)';
+
+  mb.endScore.textContent = match.mode.teams
+    ? `${e.red} — ${e.blue}`
+    : `${player?.score ?? 0} pts`;
+  mb.endNext.textContent = `NEXT MATCH IN ${INTERMISSION}`;
+  mb.end.hidden = false;
+  feed(title, e.win == null ? '#e6edf3'
+    : match.mode.teams ? TEAMS[e.win].css : won ? '#4ade80' : '#9aa4b2');
 }
 
 // ── Scoreboard ──────────────────────────────────────────────────────────────
@@ -534,23 +664,43 @@ let scoreboardSig = '';
 function updateScoreboard() {
   const rows = allTanks()
     .map((t) => ({
-      name: t.name, me: t === player,
+      name: t.name, me: t === player, team: t.team,
       k: t.kills ?? 0, a: t.assists ?? 0, d: t.deaths ?? 0, sc: t.score ?? 0,
     }))
     .sort((x, y) => y.sc - x.sc || y.k - x.k || x.name.localeCompare(y.name));
 
+  const teams = match.mode.teams;
+
   // Only touch the DOM when something actually changed — this runs every frame.
-  const sig = rows.map((r) => `${r.name}:${r.sc}:${r.k}:${r.a}:${r.d}`).join('|');
+  // The team totals are in the signature as well as the rows: they move on
+  // their own (a player who has since left still scored those points), so
+  // keying only off the rows would freeze the header at whatever it said when
+  // the last individual number changed.
+  const sig = rows.map((r) => `${r.name}:${r.team}:${r.sc}:${r.k}:${r.a}:${r.d}`).join('|')
+    + (teams ? `#${match.teamScore.red}:${match.teamScore.blue}` : '');
   if (sig === scoreboardSig) return;
   scoreboardSig = sig;
 
+  const line = (r) => `<tr class="${r.me ? 'me' : ''}">`
+    + `<td class="n">${escapeHtml(r.name)}</td>`
+    + `<td>${r.k}</td><td>${r.a}</td><td class="dim">${r.d}</td>`
+    + `<td class="sc">${r.sc}</td></tr>`;
+
+  // Grouped by side, each group headed by the total that actually decides the
+  // match. Ungrouped, a team board is just a list of names in an arena where
+  // half of them are on your side — you can read who is doing well and still
+  // not know whether you are winning.
+  const body = teams
+    ? TEAM_KEYS.map((key) =>
+      `<tr class="team-head" style="color:${TEAMS[key].css}">`
+      + `<td class="n">${TEAMS[key].name}</td><td></td><td></td><td></td>`
+      + `<td class="sc">${match.teamScore[key]}</td></tr>`
+      + rows.filter((r) => r.team === key).map(line).join('')).join('')
+    : rows.map(line).join('');
+
   hud.scoreboard.innerHTML =
     '<table><thead><tr><th class="n">PLAYER</th><th>K</th><th>A</th><th>D</th><th>PTS</th></tr></thead><tbody>'
-    + rows.map((r) => `<tr class="${r.me ? 'me' : ''}">`
-      + `<td class="n">${escapeHtml(r.name)}</td>`
-      + `<td>${r.k}</td><td>${r.a}</td><td class="dim">${r.d}</td>`
-      + `<td class="sc">${r.sc}</td></tr>`).join('')
-    + '</tbody></table>';
+    + body + '</tbody></table>';
 }
 
 // Names come from other players over the network — never inject them as markup.
@@ -887,7 +1037,17 @@ function simulate(dt, playerInput) {
   }
   match.step(inputs);
   bankFeed();
-  match.events.length = 0;   // offline nobody consumes these
+  // Offline there is no network layer to route these through, but the match
+  // still starts, ends and blocks friendly fire — and those three are the
+  // whole point of a game mode. Kills and hits already have their own direct
+  // callbacks (combat.onKill / onHit), so only these need draining here.
+  for (const e of match.events) {
+    if (e.e === 'over' || e.e === 'start') announceMatch(e);
+    else if (e.e === 'ff' && e.by === player.netId) {
+      showDamage(match.tanks.get(e.id), 0, 'friendly');
+    }
+  }
+  match.events.length = 0;
   simTime += dt;
 }
 
@@ -1254,6 +1414,7 @@ function present(dt) {
 
   updateBuffs();
   updateScoreboard();
+  updateMatchHud();
 
   const frac = player.hp / player.maxHp;
   hud.hp.style.width = `${frac * 100}%`;

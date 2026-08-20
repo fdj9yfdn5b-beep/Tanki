@@ -188,7 +188,12 @@ export class BotBrain {
       // happens to be sitting at your ideal range, which is exactly the
       // "doesn't even notice I'm behind him" behaviour. Reaction time is what
       // separates skill levels here, not whether the bot notices at all.
-      const underFire = me.threatTimer > 0 && me.threatFrom?.alive && !me.threatFrom.removed
+      // `!hostile` on the threat as well as on the search. Friendly fire cannot
+      // set a threat any more (Combat returns before takeDamage), but a bot
+      // that ever did turn and duel a teammate would look exactly like a bot
+      // that had stopped working, so it is worth being explicit here too.
+      const underFire = me.threatTimer > 0 && me.threatFrom?.alive
+        && !me.threatFrom.removed && hostile(me, me.threatFrom)
         ? me.threatFrom : null;
 
       let best = null;
@@ -197,7 +202,7 @@ export class BotBrain {
       } else {
         let bestScore = Infinity;
         for (const t of tanks) {
-          if (t === me || !t.alive) continue;
+          if (t === me || !t.alive || !hostile(me, t)) continue;
           const d = t.position.distanceTo(myPos);
           const score = Math.abs(d - this.preferredRange()) + d * 0.15;
           if (score < bestScore) { bestScore = score; best = t; }
@@ -340,4 +345,15 @@ export class BotBrain {
 
     return input;
   }
+}
+
+/**
+ * Is `other` someone this bot should be shooting at?
+ *
+ * Teams are the tanks' own property rather than something the brain is
+ * configured with, so a bot moved between sides needs no re-wiring — and in a
+ * mode with no sides every tank has a null team and everyone is fair game.
+ */
+function hostile(me, other) {
+  return !(me.team && other.team && me.team === other.team);
 }

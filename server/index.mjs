@@ -12,16 +12,31 @@ import {
   S_WELCOME, S_SNAPSHOT, S_JOIN, S_LEAVE, S_PING,
   SNAPSHOT_INTERVAL, INTERP_DELAY, LAG_COMP_WINDOW, MAX_INPUT_BACKLOG, unpackInput,
 } from '../src/net/protocol.js';
-import { HULLS, WEAPONS } from '../src/config.js';
+import { HULLS, WEAPONS, MODES, GAME_MODE } from '../src/config.js';
 import { BotBrain } from '../src/bots.js';
 import { shotSeed } from '../src/rng.js';
 
 const PORT = Number(process.env.PORT ?? 8099);
 const DEV = process.env.TANKI_DEV === '1';
 const NO_LAG_COMP = process.env.NO_LAG_COMP === '1';   // A/B switch for testing
+// MODE=ffa runs the same server without sides. Picked once at boot rather than
+// voted on mid-match: switching modes would have to move everyone between
+// teams while shots are in the air, and there is nothing to gain from it yet.
+const MODE = MODES[process.env.MODE] ? process.env.MODE : GAME_MODE;
 
 await RAPIER.init();
-const match = new Match({ RAPIER, scene: null, worldSeed: 20250812 });
+const match = new Match({ RAPIER, scene: null, worldSeed: 20250812, mode: MODE });
+
+// TARGET=20 shortens the match. Only for testing the END of one — the result
+// banner, the intermission and the reset are three minutes apart otherwise, and
+// a path you can only watch by waiting is a path nobody watches. The real
+// number is measured; see tools/matchlength.mjs.
+if (process.env.TARGET) {
+  match.mode = { ...match.mode, scoreTarget: Number(process.env.TARGET) };
+}
+if (process.env.TIME_LIMIT) {
+  match.mode = { ...match.mode, timeLimit: Number(process.env.TIME_LIMIT) };
+}
 
 const clients = new Map();   // id -> { ws, input, queue, lastAck, name, latency }
 let nextId = 1;
@@ -52,9 +67,15 @@ for (let i = 0; i < BOT_COUNT; i++) {
     id, hull: cfg.hull, weapon: cfg.weapon, name: cfg.name,
   });
   bots.push({ id, tank, brain: new BotBrain(tank, { skill: cfg.skill, seed: i / BOT_SETUPS.length }) });
-  roster.set(id, { id, name: cfg.name, hull: cfg.hull, weapon: cfg.weapon, bot: true });
+  // `team` comes back from the match, which balances the sides — it is not in
+  // BOT_SETUPS. Bots and humans join the same way and are balanced together, so
+  // three humans joining does not leave one side with every bot on it.
+  roster.set(id, {
+    id, name: cfg.name, hull: cfg.hull, weapon: cfg.weapon, team: tank.team, bot: true,
+  });
 }
-if (BOT_COUNT) console.log(`spawned ${BOT_COUNT} bots: ${bots.map((b) => b.tank.name).join(', ')}`);
+console.log(`mode: ${match.mode.name} — first to ${match.mode.scoreTarget} points, or ${match.mode.timeLimit}s`);
+if (BOT_COUNT) console.log(`spawned ${BOT_COUNT} bots: ${bots.map((b) => `${b.tank.name}${b.tank.team ? ' [' + b.tank.team + ']' : ''}`).join(', ')}`);
 
 // ── Lag compensation history ────────────────────────────────────────────────
 // Ring of past tank positions. When a client fires, it was aiming at where it
@@ -219,6 +240,7 @@ function handle(client, msg) {
 
       roster.set(client.id, {
         id: client.id, name: client.name, hull: client.hull, weapon: client.weapon,
+        team: tank.team,
       });
 
       send(client, {
@@ -226,16 +248,17 @@ function handle(client, msg) {
         id: client.id,
         tick: match.tick,
         tickRate: TICK_RATE,
+        mode: match.mode.key,
         // Bots are in the roster too — a client has no reason to know or care
         // which entries are people.
         players: [...roster.values()].filter((p) => match.tanks.has(p.id)),
       });
       broadcast({
         t: S_JOIN, id: client.id, name: client.name,
-        hull: client.hull, weapon: client.weapon,
+        hull: client.hull, weapon: client.weapon, team: tank.team,
       }, client.id);
-      console.log(`+ ${client.name} joined as ${client.hull}/${client.weapon} (${clients.size} online)`);
-      void tank;
+      console.log(`+ ${client.name} joined as ${client.hull}/${client.weapon}`
+        + `${tank.team ? ' on ' + tank.team : ''} (${clients.size} online)`);
       break;
     }
 
@@ -477,7 +500,11 @@ function sendSnapshots() {
     // nobody was sending.
     send(client, {
       t: S_SNAPSHOT, tick: snap.tick, ack: client.lastAck,
-      tanks: snap.tanks, drops: snap.drops, events,
+      // `game` is the match itself — phase, clock, scores, winner — and like
+      // `drops` before it, building it in the snapshot and forgetting to
+      // forward it here would leave every client showing a match that never
+      // starts, ends or scores while the server ran one perfectly.
+      tanks: snap.tanks, drops: snap.drops, game: snap.game, events,
     });
   }
 }

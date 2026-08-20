@@ -115,6 +115,12 @@ was edited.
 ## 3. Current state
 
 ### Works and is verified
+- **Game modes: teams, a score target, a match end.** `tdm` (default) and `ffa`
+  run through the same code — `teams: false` is the only difference, so there
+  is no second implementation. Red vs blue, first to 100 points (kills 10,
+  assists 5), 7-minute limit, 12-second intermission, then everything resets and
+  a new match starts. Friendly fire off, bots ignore teammates, each side spawns
+  on its own half of the ring. See §4 for what is measured and what is not.
 - Offline play vs 5 bots; online play vs server bots and other humans
 - Authoritative server at 60Hz, snapshots at ~19-20Hz, inputs at 60/s
 - Client prediction (moves with no round trip), reconciliation (forced 6m desync
@@ -177,9 +183,10 @@ was edited.
   most of the noise it was drowning in.
 
 ### Open / next
-1. **Game modes** — teams, match end, win condition. Turns a sandbox into a
-   game. This is the next real one: two players with different tanks now works,
-   and what is missing is something to *win*.
+1. **"I shoot a tank and it takes no health off" — reported AGAIN**, after
+   playtest 9 had it as no longer reported. See §4a, which is where this
+   session's investigation of it lives. Read that before touching hit
+   registration.
 2. **Permanent hosting — in progress on Render.** `render.yaml` is written and
    the repo has a git history; what remains is pushing to GitHub and connecting
    it. Fly was priced up and rejected for now: ~$5/month, which is a plan
@@ -201,6 +208,61 @@ was edited.
 ## 4. Findings that change what you should do next
 
 These were each measured, and several overturned an assumption. Do not redo them.
+
+**A game mode is a rule about DAMAGE, and there is exactly one place to put
+it.** Every damage path in the game — hitscan, a shell's direct hit, and splash
+— funnels through `Combat._applyDamage`. Friendly fire and "the match is already
+over" are both installed there as a single `canDamage` gate that `Match` owns.
+Putting the rule in each firing path instead is how a splash weapon ends up as
+the one thing that still kills its own team, which is the exact shape of the
+ghost-splash bug already recorded below: a check applied in two branches out of
+three, surviving review because the third branch reads as if it were doing
+something else. `tools/gamemode.mjs` tests hitscan and splash separately for
+this reason.
+
+**Turning friendly fire off manufactures the game's oldest complaint unless the
+shot says so.** A blocked shot is pixel-identical to a miss, and "I shoot a tank
+and it takes no health off" already has three separate real causes behind it in
+this file. So a shot stopped by friendly fire emits an `ff` event and the
+shooter's client floats **FRIENDLY** where the damage number would have been.
+This is not polish; without it the next playtest report is a fourth instance of
+the oldest bug in the project, with no bug behind it.
+
+**`new Match()` still defaults to the endless sandbox, and must keep doing so.**
+Every tool in `tools/` stages its own fights and runs them on a wall clock. If
+the default mode had a time limit, a long balance run would silently cross it,
+`canDamage` would start returning false, and the run would report a table
+measured on a match that had already ended — with nothing on screen saying so.
+That is the same failure shape as the wrong TTK constant below. The game asks
+for `GAME_MODE` explicitly; the harness never has to. `tools/gamemode.mjs`'s
+last block is the regression guard.
+
+**The score target is measured, not chosen.** `tools/matchlength.mjs` runs full
+bot matches headless. At 100 points TDM runs **mean 184s, median 174s, range
+119-293s** over four matches, ~17 kills each, and the final scores came in at
+95-105, 100-80, 105-70 and 85-100 — close enough that the end of a match is
+worth playing. FFA needed a different number rather than the same one: it
+produces nearly twice the kills per minute (10.3 vs 5.6) because everyone is a
+target, so 60 points ran 113s and felt over before it started; 80 runs 156s.
+The 420s time limit was never reached in any measured match — it is not the
+pacing dial, it is the guard against two players who cannot find each other.
+
+**A client must not read the win condition off its own config.** `tgt` was on
+the wire from the start and the client ignored it, showing `FIRST TO 100` from
+`config.js` through an entire 20-point match. The two normally agree, which is
+exactly why it went unnoticed — the failure only appears when a server runs a
+different number or a client is on an older build, and then the one line telling
+you how much longer this goes on is quietly wrong. Same family as the entries
+below about predicted state: **if the server is the authority on a number, the
+client displays the server's copy, not its own.**
+
+**Your own tank has to be your team's colour, and lightening it is a trap.** It
+used to be cyan regardless of hull so you could find yourself in a fight, and
+that reason is still good — but cyan in a red-vs-blue arena is a third faction,
+and you would be the only player who cannot see which side they are on. Lighter-
+but-same solves it, and the first attempt lightened by 0.42 toward white, which
+under this sun and tone mapping renders as a **white** tank — the same problem
+again. 0.22 keeps it red.
 
 **Engagement bands come from map geometry, not taste.** Ray-sampling 40k position
 pairs gave clear-line probability by range (69% at 0-10m down to 6% at 80-90m).
@@ -716,9 +778,17 @@ node tools/spreadsync.mjs        # client/server shot agreement, pure arithmetic
 node tools/firerate.mjs          # shots drawn per shot fired (LAG_TICKS=9 to stress)
 node tools/hitheight.mjs         # can every hull shoot every other hull? run after ANY
                                  # change to hull size, ride height or barrel height
+node tools/gamemode.mjs          # teams, friendly fire, match end, reset — every check
+                                 # has a control, incl. that the SANDBOX default is unchanged
+node tools/matchlength.mjs 5     # how long a match actually runs. args: [matches] [target] [mode]
 node tools/corpseblock.mjs       # do dead tanks block shots? (has a negative control)
 node tools/edgehit.mjs           # how far off-centre a shot still lands, vs the visible tank
 npm run tunnel                   # throwaway public link, verified before it is printed
+MODE=ffa node server/index.mjs   # the same server without sides
+TARGET=20 node server/index.mjs  # a short match, for testing the END of one — the
+                                 # banner, the intermission and the reset are three
+                                 # minutes apart otherwise, and a path you can only
+                                 # watch by waiting is a path nobody watches
 BOTS=0 PORT=8100 node server/index.mjs   # …then, against that server:
 PORT=8100 node tools/shotsync.mjs        # same question, end-to-end
 ```
@@ -795,6 +865,17 @@ random numbers), so within-generation ranking is near noise-free. Duels are stag
     frame rate other than 60); rotation ramps roughly halved after "too much
     resistance", and the inertia scaling square-rooted so the heavy end is not
     disproportionately sluggish.
+26. **Game modes.** Teams, a score target, a match end, an intermission and a
+    full reset — the thing §8 had been calling the biggest gap. Friendly fire
+    off through one gate on the one damage path, with a FRIENDLY tell so a
+    blocked shot cannot read as a miss; bots ignore teammates; team spawns off
+    the two halves of the existing spawn ring; team colours replace hull
+    colours; a match bar, a grouped scoreboard and a result banner. Targets
+    measured with a new `tools/matchlength.mjs`. Two bugs found by looking at
+    it rather than by testing it: the client displayed its own score target
+    instead of the server's, and on a phone the taller scoreboard ran through
+    the FIRE button while the perf overlay was stuck on with no key to toggle
+    it.
 20. Playtest: the hover hull could neither hit nor be hit. Colliders grown to
     cover the turret, hover skirt added, ride height lowered; `hitheight.mjs`
     added. Uncovered a Rail imbalance that the bug had been masking.

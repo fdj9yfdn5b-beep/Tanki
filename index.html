@@ -42,9 +42,42 @@
     </div>
   </div>
 
+  <!-- The match itself, top centre: who is winning, how long is left, and what
+       it takes to win. All three have to be visible without opening anything —
+       a score you have to press a key to see cannot change how you play. -->
+  <div id="matchbar" hidden>
+    <div class="mb-side" id="mb-red">
+      <span class="mb-name">RED</span><b id="mb-red-score">0</b>
+    </div>
+    <div class="mb-mid">
+      <b id="mb-clock">7:00</b>
+      <span id="mb-target">FIRST TO 100</span>
+    </div>
+    <div class="mb-side" id="mb-blue">
+      <b id="mb-blue-score">0</b><span class="mb-name">BLUE</span>
+    </div>
+  </div>
+
+  <!-- Result, then a countdown to the next match. The countdown is the part
+       that matters: an end screen with no stated end is indistinguishable from
+       the game having crashed. -->
+  <div id="matchend" hidden>
+    <div class="me-title" id="me-title">RED WINS</div>
+    <div class="me-score" id="me-score">0 — 0</div>
+    <div class="me-next" id="me-next">NEXT MATCH IN 12</div>
+  </div>
+
   <div id="damage"></div>
-  <div id="scoreboard"></div>
-  <div id="feed"></div>
+
+  <!-- One column down the right edge. The scoreboard grew a header row per
+       team, and with the feed separately pinned to `top: 130px` the two simply
+       overlapped — kill messages printed across the BLUE block. Stacking them
+       in one flow means the feed sits under the board at any player count
+       instead of at a guessed offset that is wrong for some of them. -->
+  <div id="right-rail">
+    <div id="scoreboard"></div>
+    <div id="feed"></div>
+  </div>
   <div id="perf"></div>
 
   <div id="respawn">RESPAWNING…</div>
